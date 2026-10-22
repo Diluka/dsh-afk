@@ -11,6 +11,7 @@
 | [index.js](./index.js) | 用户命令、工具策略、Agent 作用域和动态上下文 |
 | [config.js](./config.js) | 标准 volatile Config 与有效作用范围解析 |
 | [state.js](./state.js) | 纯 Session 投影、历史查询和持久已读回执 |
+| [history.js](./history.js) | 无命令日志的只读历史 Remote、会话权限及冷读取 |
 | [client.js](./client.js) | 输入框开关、插件设置页、记录窗口和命令摘要 |
 | [types](./types/) | 共享业务模型、宿主接口及测试边界声明 |
 | [test](./test/) | Node test runner 单元与真实 SDK 隔离集成测试 |
@@ -21,7 +22,7 @@
 
 - 兼容目标以 [package.json](./package.json) 的 `engines` 为准；当前为 Node.js 22+、DSH 0.2.1-rc.2。pnpm 版本由 `packageManager` 固定。
 - 宿主已有的公共库优先使用必需 `peerDependencies`，开发与 CI 在 `devDependencies` 精确固定同版；不要引入普通生产依赖的重复副本。
-- 当前公共 peer 为 Zod 4.6.7、Schemastery 3.18.5。保留 [pnpm-workspace.yaml](./pnpm-workspace.yaml) 的 `autoInstallPeers: false`，缺失时不要靠自动选版掩盖问题，也不要把必需 peer 标为 optional。
+- 当前公共 peer 为 Zod 4.6.7、Schemastery 3.18.5、Typert Protocol 0.2.1-rc.2。保留 [pnpm-workspace.yaml](./pnpm-workspace.yaml) 的 `autoInstallPeers: false`，缺失时不要靠自动选版掩盖问题，也不要把必需 peer 标为 optional。
 - peer 是兼容声明，不是自动运行时保护。改版本前核对实际宿主及其解析契约，验证生产副本确实使用宿主同一 provider。
 - React 从宿主模块表获取，其他 Client 能力通过 Service 注入；不要为了 JSDoc 新增跨插件运行时导入。
 - SDK 投影声明的 Zod minor 类型身份通过定向 override 对齐；修改该 override 时同时验证类型和实际运行行为，不全局覆盖未知依赖。
@@ -53,6 +54,7 @@ dsh plugin --profile web add "link:$PWD"
 - 全局写入使用 Settings 权限和 revision/CAS。global 模式下 `/afk on/off/set` 拒绝修改；不能借 Session 命令权限写全局配置。
 - 所有有效 ask 调用都记录，不以 AFK 开关决定是否入档。记录按工具调用分批，不把自然语言问号当结构化提问；兼顾 native、PTC 和已入场晚到回复。
 - 已读只隐藏默认列表，不删除记录；未知或跨会话 ID 整批拒绝，并发回执单调合并，pending 结果到来不能恢复成未读。fork 不继承本地 AFK 授权和父会话记录。
+- 自动已读采用标准答案规则，不声称验证真人身份：成功 native/PTC 结果须包含完整、问题 ID 恰好各一次的答案，且任何答案项均不带 AFK 回复前缀。晚到回复只在匹配的 `user-question-reply/answered` 消息实际入场、且答案完整后自动已读；普通聊天和仅排队的 inbox 消息不触发。变更折叠语义须递增 projection `stateVersion`，从日志重建旧记录。
 - Session 日志是本地设置、提问和已读的事实来源。不要新增全局问答数据库、伪造用户命令/消息、自定义不受支持的事件或在前端轮询重扫日志。
 - `requestState` 只表示模型见过的可信 runtime-context 具名快照；`afk/mode` 由最终回复标识或明确拒绝证明实际介入。证据不足保留 null，不能凭配置把 `UNKNOWN_TOOL` 推断成 AFK block。
 - 工具 wrapper 的成功 metadata 可能被宿主规范化丢弃。自动回复正文保留 `[AFK 自动应答 / not human approval]`；已读工具回执使用自身 output 定义的 `presentationMeta`，不要伪造结果归属。
@@ -61,8 +63,9 @@ dsh plugin --profile web add "link:$PWD"
 
 - 模式、作用范围和回复放在插件详情页；提问记录放在当前会话 AFK 开关旁。全局 scope 只限当前 Host/profile，记录与已读始终按会话隔离。
 - 使用受支持 Slots、主题 token、locale 和 selector hooks；注册与订阅归属插件生命周期，不写组件外 DOM。开关须适配深浅色，记录窗口保持无蒙层、支持关闭/Escape。
-- 聊天只在 `conversation.chat.commandview` 的 `afk` key 下显示人类可读摘要；不接管其他命令，不打印原始 JSON、问题正文、回复或累计 readIds。
-- 保留机器结果和持久回执。标记已读后只由 projection revision 自动刷新一次，不额外 setRefresh；分页越界校正与显式刷新仍保留。
+- 聊天只在 `conversation.chat.commandview` 的 `afk` key 下显示人类可读摘要；只读 history 查询的 pending/success 不渲染提示，失败与写入回执仍可见。仅改变呈现，不删除 command 日志或机器结果；兼容缺失 args 的旧 history 结果。不接管其他命令，不打印原始 JSON、问题正文、回复或累计 readIds。
+- 记录窗口通过 `afkHistory/history` 只读 Remote 查询，禁止回退 `/afk history` 命令、创建空聊天节点或用滚动补偿掩盖副作用；读取不能改变 Session seq、projection revision 或已读状态。查询权限按 Session 的该 endpoint 独立检查，标记已读仍检查 `commands/execute`。冷读取使用 Session observation/restore，不激活 Agent；租约、取消和 Remote 注册归属插件生命周期。
+- 保留机器结果和写入的持久回执。标记已读后只由 projection revision 自动刷新一次，不额外 setRefresh；分页越界校正与显式刷新仍保留。
 - 配置不可用时默认拒绝修改。滚动升级兼容只能依据完整旧 Host `/afk` 状态证明；证明绑定 Settings snapshot 和本地 `connection/reset` 代次，写前重证并检查在途 signal/epoch。新 Host 返回 scope 后不得 fallback。
 
 ## 命令与工具契约
@@ -87,6 +90,7 @@ dsh plugin --profile web add "link:$PWD"
 
 - [tsconfig.json](./tsconfig.json) 对生产 JS、测试 JS 和编译期契约启用 `allowJs/checkJs/strict/noImplicitAny/noEmit`；不改为 TypeScript 运行时或生成 JS。
 - 共享领域模型在 [afk.d.ts](./types/afk.d.ts)，Host/Client 边界分别在 [host.d.ts](./types/host.d.ts)、[client.d.ts](./types/client.d.ts)；函数和组件私有 props 的 JSDoc 靠近实现。
+- 本仓库的 `.d.ts` 声明层只依赖独立声明和 SDK 公开类型，不反向导入 JS 实现（包括 `import()` 类型查询），本地声明模块之间不得循环依赖；本地引用必须显式写 `.d.ts`/`.d.mts`/`.d.cts`，只纳入声明扩展时使用普通的副作用式 `import '…'`，不写空 `import type {}`；`.d.ts` 本身不产生运行时代码，不用运行时导入语义解释这一区别，也不借 `.js` 路径隐含替换。Host 的 Context/lookup 扩展放在 Host 边界并引用能力接口；JS 实现通过 `@implements` 满足契约。编译期契约测试是同时消费声明和实现的叶子，不作为声明层依赖。
 - 优先引用已验证版本的官方 SDK 类型，信任边界用 `unknown` 后窄化。仅用框架公开的 augmentation 点；禁止伪造宽泛外部模块、`any`、`@ts-ignore` 或 `@ts-nocheck` 来消除错误。
 - `skipLibCheck` 避免已发布 SDK 声明内部诊断，不豁免项目 JS。保留 [编译期负例](./types/typecheck-contracts.ts)，防止接口意外退化为宽类型。
 - [测试声明](./types/test.d.ts) 只隔离真实 Host/Client Context 同名 Service 的静态冲突与不完整 fixture 构造，不代替真实服务。业务负向用例的 `@ts-expect-error` 必须说明具体非法输入。

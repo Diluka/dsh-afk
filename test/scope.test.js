@@ -55,12 +55,12 @@ test('real volatile Settings persist atomically without remount; scope controls 
     { Context }, { default: Loader }, { default: SystemPrompt }, { default: Tools },
     { default: Sessions }, { default: Agents }, { default: Commands }, { default: Projections },
     { default: UserQuestions }, ask, { createScope }, { default: ConfigEditor },
-    { default: Settings }, { mountRootInclude, readProfilePatches }, { createUserMessage },
+    { default: Settings }, { mountRootInclude, readProfilePatches }, { createUserMessage }, { default: Typert },
   ] = await Promise.all([
     load('@deepseek-ai/cordis'), load('@deepseek-ai/cordis-plugin-loader'), load('@deepseek-ai/dsh-system-prompt'), load('@deepseek-ai/dsh-tools'),
     load('@deepseek-ai/dsh-session'), load('@deepseek-ai/dsh-agent'), load('@deepseek-ai/dsh-commands'), load('@deepseek-ai/dsh-session-projection'),
     load('@deepseek-ai/dsh-user-questions'), load('@deepseek-ai/dsh-tool-ask-user'), load('@deepseek-ai/dsh-scope'), load('@deepseek-ai/dsh-config-editor'),
-    load('@deepseek-ai/dsh-settings'), load('@deepseek-ai/dsh-app-boot'), load('@deepseek-ai/dsh-llm'),
+    load('@deepseek-ai/dsh-settings'), load('@deepseek-ai/dsh-app-boot'), load('@deepseek-ai/dsh-llm'), load('@deepseek-ai/dsh-typert-registry'),
   ]);
   const dir = await mkdtemp(join(tmpdir(), 'dsh-afk-scope-'));
   const home = join(dir, 'home');
@@ -83,7 +83,7 @@ test('real volatile Settings persist atomically without remount; scope controls 
   try {
     ctx.baseUrl = pathToFileURL(dir + '/').href;
     ctx.provide('profileContext', profile);
-    for (const service of [Loader, SystemPrompt, Tools, Sessions, Agents, Commands, Projections, UserQuestions]) await ctx.plugin(service);
+    for (const service of [Loader, Typert, SystemPrompt, Tools, Sessions, Agents, Commands, Projections, UserQuestions]) await ctx.plugin(service);
     await ctx.plugin(ask);
     let humanRequests = 0;
     ctx.on('user-questions/request', async request => {
@@ -341,7 +341,7 @@ test('real volatile Settings persist atomically without remount; scope controls 
     try {
       next.baseUrl = pathToFileURL(dir + '/').href;
       next.provide('profileContext', profile);
-      for (const service of [Loader, SystemPrompt, Tools, Sessions, Agents, Commands, Projections, UserQuestions]) await next.plugin(service);
+      for (const service of [Loader, Typert, SystemPrompt, Tools, Sessions, Agents, Commands, Projections, UserQuestions]) await next.plugin(service);
       await next.plugin(ask);
       const reloaded = await mountRootInclude(next, basePath, readProfilePatches('dsh', profile), pathToFileURL(join(runtime, 'package.json')).href);
       await next.loader.await();

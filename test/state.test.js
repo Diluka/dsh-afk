@@ -112,9 +112,11 @@ test('all normal questions are recorded while AFK is off and start unread', () =
   assert.equal(answered.records[0].status, 'answered');
   assert.equal(answered.records[0].afk, false);
   assert.equal(answered.records[0].mode, null);
-  assert.equal(answered.records[0].read, false);
+  assert.equal(answered.records[0].read, true);
   assert.equal(answered.view.total, 1);
-  assert.equal(answered.view.unread, 1);
+  assert.equal(answered.view.unread, 0);
+  assert.equal(historyOf(answered).records.length, 0);
+  assert.equal(historyOf(answered, 0, 20, 'all').records[0].status, 'answered');
   const auto = result(pending);
   assert.equal(auto.records[0].status, 'auto-replied');
   assert.equal(auto.view.total, 1);
@@ -139,7 +141,128 @@ test('failed auto replies are not reported as successful; late user replies repl
   assert.equal(state.records[0].status, 'pending');
   state = projection.apply(state, event('user/message', { source: { kind: 'user-question-reply', callId: 'q1', outcome: 'answered' }, content: [{ type: 'text', text: '{"answers":[{"id":"strategy","selected":["B"]}]}' }] }, 4));
   assert.equal(state.records[0].status, 'answered');
+  assert.equal(state.records[0].read, true);
+  assert.equal(state.view.unread, 0);
   assert.deepEqual(/** @type {import('@deepseek-ai/dsh-user-questions').AskUserQuestionAnswer} */ (state.records[0].answer).answers[0].selected, ['B']);
+});
+
+test('complete native batches auto-read selections, custom text and explicit skips, independent of answer order', () => {
+  const batch = [...questions, { id: 'details', question: 'Anything else?' }];
+  const pending = projection.apply(init(), event('tool/call', { name: 'ask_user_question', callId: 'batch', arguments: JSON.stringify({ questions: batch }) }, 0));
+  for (const answers of [
+    [{ id: 'strategy', selected: ['B'] }, { id: 'details', selected: [], custom: 'Details' }],
+    [{ id: 'details', selected: [] }, { id: 'strategy', selected: [] }],
+  ]) {
+    const entry = event('tool/result', { message: { toolCallId: 'batch', content: [{ type: 'text', text: JSON.stringify({ answers }) }] } }, 1);
+    const state = projection.apply(pending, entry);
+    assert.equal(state.records[0].read, true);
+    assert.equal(state.view.unread, 0);
+    assert.equal(state.view.revision, pending.view.revision + 1, 'answer and read publish together');
+    assert.deepEqual(historyOf(state).records, []);
+    assert.deepEqual(historyOf(state, 0, 20, 'all').records[0].answer, { answers });
+    assert.equal(projection.apply(state, entry), state, 'repeated final results do not decrement again');
+  }
+});
+
+test('incomplete, unrecognized, conflicting and AFK-tagged results never auto-read', () => {
+  const pending = call(init());
+  for (const value of [
+    {}, 'User answered', { answers: [] },
+    { answers: [{ id: 'other', selected: [] }] },
+    { answers: [{ id: 'strategy', selected: [] }, { id: 'strategy', selected: [] }] },
+    { answers: [{ id: 'strategy' }] },
+    { answers: [{ id: 'strategy', selected: [123] }] },
+    { answers: [{ id: 'strategy', selected: [], custom: null }] },
+    { answers: [{ id: 'strategy', selected: [], author: 'human' }] },
+    { pending: true, answers: [{ id: 'strategy', selected: [] }] },
+    { answers: [{ id: 'strategy', selected: ['B'], custom: REPLY_PREFIX + 'automated but not the exact AFK output' }] },
+  ]) {
+    const state = projection.apply(pending, event('tool/result', { message: { toolCallId: 'q1', content: [{ type: 'text', text: JSON.stringify(value) }] } }, 3));
+    assert.equal(state.records[0].read, false, JSON.stringify(value));
+    assert.equal(state.view.unread, 1);
+  }
+  const batch = [...questions, { id: 'details', question: 'Anything else?' }];
+  const two = projection.apply(init(), event('tool/call', { name: 'ask_user_question', callId: 'q1', arguments: JSON.stringify({ questions: batch }) }, 2));
+  for (const answers of [
+    [{ id: 'strategy', selected: [] }],
+    [{ id: 'strategy', selected: [] }, { id: 'details', selected: [], custom: REPLY_PREFIX + 'mixed automatic batch' }],
+  ]) {
+    const mixed = projection.apply(two, event('tool/result', { message: { toolCallId: 'q1', content: [{ type: 'text', text: JSON.stringify({ answers }) }] } }, 3));
+    assert.equal(mixed.records[0].read, false);
+    assert.equal(mixed.view.unread, 1);
+  }
+  for (const state of [result(pending), result(pending, { isError: true, tagged: false })]) {
+    assert.equal(state.records[0].read, false);
+    assert.equal(state.view.unread, 1);
+  }
+});
+
+test('PTC auto-read uses the nested call identity, and failed or automatic answers remain unread', () => {
+  const base = { rootCallId: 'root', parentCallId: 'program', subCallId: 'program:ptc:1', name: 'ask_user_question', arguments: { questions } };
+  const pending = projection.apply(init(), event('tool/ptc-dispatch-start', base, 2));
+  for (const [custom, isError, read] of /** @type {[string, boolean, boolean][]} */ ([['Human text', false, true], [REPLY_PREFIX + 'Automated', false, false], ['Human text', true, false]])) {
+    const state = projection.apply(pending, event('tool/ptc-dispatch', {
+      ...base, isError, content: [{ type: 'text', text: JSON.stringify({ answers: [{ id: 'strategy', selected: [], custom }] }) }],
+    }, 3));
+    assert.equal(state.records[0].read, read);
+    assert.equal(state.view.unread, read ? 0 : 1);
+  }
+  assert.equal(projection.apply(pending, event('tool/result', {
+    message: { toolCallId: 'program', content: [{ type: 'text', text: '{"answers":[{"id":"strategy","selected":[]}]}' }] },
+  }, 3)), pending, 'the run_code parent cannot acknowledge its question sub-call');
+});
+
+test('only an admitted matching late reply auto-reads; ordinary messages and queued replies do not', () => {
+  for (const callId of ['q1', 'program:ptc:1']) {
+    let state = result(call(init(), callId), { id: callId, isError: true });
+    const answer = { kind: 'answer_to_pending_question', tool: 'ask_user_question', callId, questions, answers: [{ id: 'strategy', selected: ['B'] }] };
+    const content = [{ type: 'text', text: JSON.stringify(answer) }];
+    const source = { kind: 'user-question-reply', callId, outcome: 'answered' };
+    for (const ignored of [
+      event('user/message', { source: { kind: 'user' }, content }, 4),
+      event('user/message', { source: { ...source, callId: 'another-session-call' }, content }, 4),
+      event('user/message', { source: { ...source, outcome: 'cancelled' }, content }, 4),
+      event('agent/inbox/spliced', { inserted: [{ source, content }] }, 4),
+    ]) assert.equal(projection.apply(state, ignored), state);
+    const invalid = projection.apply(state, event('user/message', { source, content: [{ type: 'text', text: '{}' }] }, 4));
+    assert.equal(invalid.view.unread, 1, 'even a recognized source cannot auto-read an unreadable batch');
+    const entry = event('user/message', { source, content }, 5);
+    const revision = state.view.revision;
+    state = projection.apply(state, entry);
+    assert.equal(state.records[0].read, true);
+    assert.equal(state.records[0].status, 'answered');
+    assert.equal(state.view.unread, 0);
+    assert.equal(state.view.revision, revision + 1);
+    assert.deepEqual(state.records[0].answer, answer);
+    state = projection.apply(state, entry);
+    assert.equal(state.view.unread, 0, 'a repeated late reply cannot decrement twice');
+    state = acknowledge(state, [state.records[0].id], 6);
+    assert.equal(projection.apply(state, entry).view.unread, 0, 'manual and automatic receipts merge monotonically');
+    assert.equal(projection.apply(init(10), entry).view.unread, 0, 'fork ignores inherited replies');
+  }
+});
+
+test('automatic reads survive stale manual receipts and reconstruct from the persisted event log', () => {
+  let state = call(init());
+  state = call(state, 'q2', 3);
+  const receipt = markReadOf(state, [state.records[1].id]);
+  const log = [
+    event('tool/call', { name: 'ask_user_question', callId: 'q1', arguments: JSON.stringify({ questions }) }, 2),
+    event('tool/call', { name: 'ask_user_question', callId: 'q2', arguments: JSON.stringify({ questions }) }, 3),
+    event('tool/result', { message: { toolCallId: 'q1', content: [{ type: 'text', text: '{"answers":[{"id":"strategy","selected":[]}]}' }] } }, 4),
+    event('command/run', { name: 'afk', args: 'read ["3:q2"]', commandId: 'stale', source: { kind: 'user' } }, 5),
+    event('command/done', { commandId: 'stale', kind: 'success', text: JSON.stringify(receipt) }, 6),
+    event('tool/result', { message: { toolCallId: 'q2', content: [{ type: 'text', text: '{"pending":true}' }] } }, 7),
+    event('user/message', { source: { kind: 'user-question-reply', callId: 'q2', outcome: 'answered' }, content: [{ type: 'text', text: '{"answers":[{"id":"strategy","selected":["B"]}]}' }] }, 8),
+  ];
+  const live = log.reduce((value, entry) => projection.apply(value, entry), init());
+  const restored = /** @type {import('@deepseek-ai/dsh-session').SessionEvent[]} */ (JSON.parse(JSON.stringify(log)))
+    .reduce((value, entry) => projection.apply(value, entry), init());
+  assert.equal(live.view.unread, 0);
+  assert.deepEqual(live.records.map(record => record.read), [true, true]);
+  assert.equal(historyOf(live, 0, 20, 'all').total, 2);
+  assert.deepEqual(restored, live);
+  assert.deepEqual(projection.stateSchema.parse(JSON.parse(JSON.stringify(live))), live);
 });
 
 test('replaying persisted JSON reconstructs settings and history without plugin memory', () => {
@@ -182,7 +305,7 @@ function acknowledge(state, ids, seq = 100) {
 }
 
 test('read acknowledgement hides an item by default without deleting it from all history', () => {
-  let state = result(call(init()), { tagged: false });
+  let state = result(call(init()));
   const id = state.records[0].id;
   const before = state;
   const value = markReadOf(state, [id]);
@@ -204,7 +327,7 @@ test('read acknowledgement hides an item by default without deleting it from all
 });
 
 test('invalid IDs and failed commands never partially acknowledge records', () => {
-  const state = result(call(init()), { tagged: false });
+  const state = result(call(init()));
   const id = state.records[0].id;
   for (const ids of [[], [id, id], [id, 'other-session-id'], [''], Array.from({ length: 51 }, (_, i) => `id-${i}`)]) {
     assert.throws(() => markReadOf(state, ids));
@@ -216,8 +339,8 @@ test('invalid IDs and failed commands never partially acknowledge records', () =
 });
 
 test('concurrent complete read snapshots merge monotonically rather than resurrecting acknowledgements', () => {
-  let state = result(call(init()), { tagged: false });
-  state = result(call(state, 'q2', 4), { id: 'q2', seq: 5, tagged: false });
+  let state = result(call(init()));
+  state = result(call(state, 'q2', 4), { id: 'q2', seq: 5 });
   const first = markReadOf(state, [state.records[0].id]);
   const second = markReadOf(state, [state.records[1].id]);
   for (const [index, value] of [first, second].entries()) {
@@ -238,7 +361,7 @@ test('a question acknowledged while pending stays read after its answer arrives'
 });
 
 test('native and PTC mark-read tools persist only final success, including spilled content', () => {
-  const initial = result(call(init()), { tagged: false });
+  const initial = result(call(init()));
   const value = markReadOf(initial, [initial.records[0].id]);
   let native = projection.apply(initial, event('tool/call', { name: MARK_READ, callId: 'mark-native', arguments: '{}' }, 4));
   native = projection.apply(native, event('tool/result', { message: { toolCallId: 'mark-native', content: [{ type: 'text', text: 'spilled' }] }, meta: { dshAfkRead: value } }, 5));
@@ -254,7 +377,7 @@ test('native and PTC mark-read tools persist only final success, including spill
   assert.equal(unpaired, initial);
 });
 
-test('version-three replay backfills legacy questions and reconstructs persisted read state', () => {
+test('version-four replay backfills legacy questions and reconstructs persisted read state', () => {
   const log = [
     event('tool/call', { name: 'ask_user_question', callId: 'q1', arguments: JSON.stringify({ questions }) }, 0),
     event('tool/result', { message: { toolCallId: 'q1', content: [{ type: 'text', text: '{"answers":[{"id":"strategy","selected":["B"]}]}' }] } }, 1),
@@ -264,7 +387,7 @@ test('version-three replay backfills legacy questions and reconstructs persisted
   ];
   const persisted = /** @type {import('@deepseek-ai/dsh-session').SessionEvent[]} */ (/** @type {unknown} */ (JSON.parse(JSON.stringify(log))));
   const restored = persisted.reduce((state, entry) => projection.apply(state, entry), init());
-  assert.equal(projection.stateVersion, 3);
+  assert.equal(projection.stateVersion, 4);
   assert.equal(restored.view.enabled, false);
   assert.equal(restored.view.total, 2);
   assert.equal(restored.view.unread, 1);

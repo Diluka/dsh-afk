@@ -5,15 +5,16 @@ import type { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client';
 import type { SlotRegistry } from '@deepseek-ai/dsh-client-ui-renderer/client';
 import type { ConfigFormSnapshot, ConfigForms } from '@deepseek-ai/dsh-client-ui-settings/client';
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots';
-import type { AfkHistory, AfkPreferences, AfkRecord } from './afk.js';
-// Load the owners' actual Slot/standard-kit declarations, never runtime modules.
-import type {} from '@deepseek-ai/dsh-client-ui-chat/client';
-import type {} from '@deepseek-ai/dsh-client-ui-conversation/client';
-import type {} from '@deepseek-ai/dsh-client-ui-plugin-manager/client';
-import type {} from '@deepseek-ai/dsh-client-ui-session/client';
-import type {} from '@deepseek-ai/dsh-api-remote-access/client';
-import type {} from '@deepseek-ai/dsh-client-connection/client';
-import type {} from '@deepseek-ai/dsh-api-settings-controller/remote';
+import type { AfkHistory, AfkPreferences, AfkRecord } from './afk.d.ts';
+// Include the owners' Slot/standard-kit and Remote declaration augmentations.
+import '@deepseek-ai/dsh-client-ui-chat/client';
+import '@deepseek-ai/dsh-client-ui-conversation/client';
+import '@deepseek-ai/dsh-client-ui-plugin-manager/client';
+import '@deepseek-ai/dsh-client-ui-session/client';
+import '@deepseek-ai/dsh-api-remote-access/client';
+import '@deepseek-ai/dsh-client-connection/client';
+import '@deepseek-ai/dsh-api-settings-controller/remote';
+import './history.d.ts';
 
 /** Only React is a module-table dependency of this unbuilt browser artifact. */
 export interface ClientModuleMap {
@@ -22,16 +23,16 @@ export interface ClientModuleMap {
 export type ClientModuleRequire = <K extends keyof ClientModuleMap>(id: K) => ClientModuleMap[K];
 
 /** The concrete Client services this plugin consumes, without the Host sessions merge. */
-export type AfkClientContext = Pick<Context, 'effect' | 'on'> & {
+export type AfkClientContext = Pick<Context, 'effect' | 'on' | 'inject'> & {
   locale: Pick<LocaleRuntime, 'register' | 'bind' | 'subscribe' | 'getSnapshot'>;
   configForms: Pick<ConfigForms, 'get' | 'describe'>;
-  remote: Pick<ClientRemote, 'commands'>;
+  remote: Pick<ClientRemote, 'commands' | '$mount'>;
   sessions: Pick<ISessions, 'retain'>;
   slots: Pick<SlotRegistry, 'register' | 'inject'>;
 };
 export interface AfkClientModule {
   inject: string[];
-  apply(ctx: AfkClientContext): void;
+  apply(ctx: AfkClientContext): void | Promise<void>;
 }
 /** Plugin-specific refinement of the documented lazy factory registration protocol. */
 export interface AfkClientRegistration {
@@ -71,4 +72,5 @@ export interface HistoryLoadState {
 export interface CommandSummary {
   state: 'running' | 'success' | 'error';
   text: string;
+  hidden?: boolean;
 }
