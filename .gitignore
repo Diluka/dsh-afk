@@ -1,0 +1,16 @@
+node_modules/
+.serena/
+artifacts/
+*.tgz
+
+# Local verification notes and screenshots are not publication material.
+/docs/
+
+# Credentials, logs and editor/OS state.
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+.vscode/
+.idea/

@@ -1,0 +1,20 @@
+{
+  "name": "dsh-afk",
+  "version": "0.3.4",
+  "private": true,
+  "description": "Global or per-session AFK controls, configurable automatic replies, and durable question history for DeepSeek Harness.",
+  "type": "module",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/Diluka/dsh-afk.git" },
+  "homepage": "https://github.com/Diluka/dsh-afk#readme",
+  "bugs": { "url": "https://github.com/Diluka/dsh-afk/issues" },
+  "engines": { "node": ">=22", "dsh": "0.2.1-rc.2" },
+  "exports": { ".": "./index.js", "./client": "./client.js", "./locale/*.json": "./locale/*.json", "./icon": "./icon.svg" },
+  "files": ["index.js", "state.js", "config.js", "client.js", "cordis.patch.yml", "locale/*.json", "icon.svg", "README.md", "LICENSE"],
+  "scripts": { "test": "node --test test/*.test.js", "check": "node --check index.js && node --check state.js && node --check config.js && node --check client.js" },
+  "dependencies": { "zod": "4.6.7", "@deepseek-ai/schemastery": "3.18.5" },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": { "platform": "web", "immediately": true, "inject": ["@deepseek-ai/dsh-client-ui-conversation", "@deepseek-ai/dsh-api-remotes", "@deepseek-ai/dsh-client-locale", "@deepseek-ai/dsh-client-ui-settings", "@deepseek-ai/dsh-client-ui-chat"] }
+  }
+}

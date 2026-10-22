@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "AFK · Unattended Session Mode",
+    "description": "Choose per-session or profile-wide AFK controls with custom replies or a disabled question tool. Question history and read status always stay per session. Permission requests and plan approvals are never authorized automatically."
+  }
+}
