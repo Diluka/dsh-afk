@@ -2,6 +2,8 @@ node_modules/
 .serena/
 artifacts/
 *.tgz
+*.tap
+*.tsbuildinfo
 
 # Local verification notes and screenshots are not publication material.
 /docs/

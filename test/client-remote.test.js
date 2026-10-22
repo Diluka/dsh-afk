@@ -5,9 +5,11 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const runtime = process.env.DSH_TEST_RUNTIME_DIR;
-const load = runtime
-  ? async name => import(pathToFileURL(createRequire(join(runtime, 'package.json')).resolve(name)).href)
-  : undefined;
+/** @type {import('../types/test.js').RuntimeLoader} */
+const load = async name => {
+  assert.ok(runtime, 'Only non-skipped real-runtime tests load SDK modules');
+  return import(pathToFileURL(createRequire(join(runtime, 'package.json')).resolve(name)).href);
+};
 
 // This is not a React/DOM stand-in. Both Cordis containers, the ClientRemote
 // implementation, generated namespace contribution, Host command registry, AFK
@@ -28,17 +30,25 @@ test('real rc.2 ClientRemote commands namespace requires remote.commands and exe
     load('@deepseek-ai/dsh-tool-ask-user'), load('@deepseek-ai/dsh-scope'),
     load('@deepseek-ai/dsh-typert-registry/client'), load('@deepseek-ai/dsh-api-gateway/client'),
     load('@deepseek-ai/dsh-commands/remote'),
-    import(process.env.DSH_TEST_PLUGIN_DIR
+    /** @type {Promise<typeof import('../index.js')>} */ (import(process.env.DSH_TEST_PLUGIN_DIR
       ? pathToFileURL(join(process.env.DSH_TEST_PLUGIN_DIR, 'index.js')).href
-      : '../index.js'),
+      : '../index.js')),
   ]);
-  const host = new Context();
+  const hostContext = new Context();
+  // The same program loads Client typings, but this Context owns a real Host SessionStore.
+  const host = /** @type {import('../types/test.js').FixtureHostContext} */ (/** @type {unknown} */ (hostContext));
   const client = new Context();
+  /** @type {import('../types/test.js').RuntimeFiber[]} */
   const hostFibers = [];
+  /** @type {import('../types/test.js').RuntimeFiber[]} */
   const clientFibers = [];
+  /** @type {import('../types/test.js').RuntimeScope[]} */
   const agentScopes = [];
+  /** @type {import('../types/test.js').Dispose[]} */
   const agentRegistrations = [];
+  /** @type {{agentId: string, line: string}[]} */
   const wireCalls = [];
+  /** @type {Map<string, import('../types/test.js').FixtureAgent>} */
   const agents = new Map();
   const signal = () => new AbortController().signal;
   try {
@@ -50,8 +60,9 @@ test('real rc.2 ClientRemote commands namespace requires remote.commands and exe
     const afkFiber = await host.plugin(afk);
     hostFibers.push(afkFiber);
     for (const id of ['afk-client-remote-a', 'afk-client-remote-b']) {
-      const agent = { id, session: host.sessions.create(id) };
-      const scope = createScope(host, agent);
+      // The real services exercised here need no Agent loop/inbox/model driver.
+      const agent = /** @type {import('../types/test.js').FixtureAgent} */ (/** @type {unknown} */ ({ id, session: host.sessions.create(/** @type {import('@deepseek-ai/dsh-session').SessionId} */ (id)) }));
+      const scope = createScope(hostContext, agent);
       agentScopes.push(scope);
       agent.ctx = scope.ctx;
       agents.set(id, agent);
@@ -59,6 +70,8 @@ test('real rc.2 ClientRemote commands namespace requires remote.commands and exe
     }
     const a = agents.get('afk-client-remote-a');
     const b = agents.get('afk-client-remote-b');
+    assert.ok(a);
+    assert.ok(b);
 
     // Passive, in-process Connection prevents event pumps, WebSockets, servers
     // or browser/auth access. This is the only substituted runtime boundary.
@@ -69,6 +82,7 @@ test('real rc.2 ClientRemote commands namespace requires remote.commands and exe
       state: { getSnapshot: () => 'connected', subscribe: () => () => {} },
       rpc: {
         open: async function* () { throw new Error('This unary fixture must not open streams'); },
+        /** @param {string} channel @param {string} endpoint @param {import('../types/test.js').CommandCarrierArgs} payload @param {AbortSignal} callerSignal */
         async call(channel, endpoint, payload, callerSignal) {
           assert.equal(channel, '/api');
           assert.equal(endpoint, 'commands/execute');
@@ -99,45 +113,59 @@ test('real rc.2 ClientRemote commands namespace requires remote.commands and exe
     }));
     assert.ok(client.get('remote.commands'), 'the real generated contribution must install its concrete child Service');
 
+    /** @type {import('@deepseek-ai/cordis').Context | undefined} */
     let oldConsumer;
     clientFibers.push(await client.plugin({
       name: 'afk-client-remote-old-injection', inject: ['remote'],
       apply(ctx) { oldConsumer = ctx; },
     }));
     assert.throws(
-      () => oldConsumer.remote.commands.execute(a.id, '/afk', [], signal()),
+      () => { assert.ok(oldConsumer); return oldConsumer.remote.commands.execute(a.id, '/afk', [], signal()); },
       /cannot get property "remote\.commands" without inject/,
       'injecting only the parent Remote service must reproduce the actual GUI failure',
     );
     assert.equal(wireCalls.length, 0, 'the missing namespace injection must fail before any carrier or Host write');
 
+    /** @type {import('@deepseek-ai/cordis').Context | undefined} */
     let childOnlyConsumer;
     clientFibers.push(await client.plugin({
       name: 'afk-client-remote-child-only-injection', inject: ['remote.commands'],
       apply(ctx) { childOnlyConsumer = ctx; },
     }));
     assert.throws(
-      () => childOnlyConsumer.remote.commands.execute(a.id, '/afk', [], signal()),
+      () => { assert.ok(childOnlyConsumer); return childOnlyConsumer.remote.commands.execute(a.id, '/afk', [], signal()); },
       /cannot get property "remote" without inject/,
       'a child Service dependency does not implicitly inject its parent for nested property access',
     );
-    const directChildRead = await childOnlyConsumer['remote.commands'].execute(a.id, '/afk', [], signal());
-    assert.equal(directChildRead.ok, true, directChildRead.error?.message);
+    assert.ok(childOnlyConsumer);
+    // Generated namespaces also expose a concrete dotted child Service; its method contract is the generated remote.commands interface.
+    const childContext = /** @type {import('@deepseek-ai/cordis').Context & {'remote.commands': import('@deepseek-ai/cordis').Context['remote']['commands']}} */ (childOnlyConsumer);
+    const directChildRead = await childContext['remote.commands'].execute(a.id, '/afk', [], signal());
+    assert.equal(directChildRead.ok, true, directChildRead.ok ? undefined : directChildRead.error.message);
+    assert.ok(directChildRead.value);
+    assert.ok(typeof directChildRead.value.result.text === 'string');
     assert.equal(JSON.parse(directChildRead.value.result.text).enabled, false);
 
+    /** @type {import('@deepseek-ai/cordis').Context | undefined} */
     let fixedConsumer;
     clientFibers.push(await client.plugin({
       // The GUI keeps ctx.remote.commands syntax, so it needs both traversed Services.
       name: 'afk-client-remote-fixed-injection', inject: ['remote', 'remote.commands'],
       apply(ctx) { fixedConsumer = ctx; },
     }));
-    const remoteExecute = (agentId, line) => fixedConsumer.remote.commands.execute(agentId, line, [], signal());
+    /** @param {import('@deepseek-ai/dsh-session').SessionId} agentId @param {string} line */
+    const remoteExecute = (agentId, line) => {
+      assert.ok(fixedConsumer);
+      return fixedConsumer.remote.commands.execute(agentId, line, [], signal());
+    };
+    /** @template {string} L @param {import('@deepseek-ai/dsh-session').SessionId} agentId @param {L} line @returns {Promise<import('../types/test.js').FixtureCommandValue<L>>} */
     const success = async (agentId, line) => {
       const envelope = await remoteExecute(agentId, line);
-      assert.equal(envelope.ok, true, envelope.error?.message);
+      assert.equal(envelope.ok, true, envelope.ok ? undefined : envelope.error.message);
       assert.ok(envelope.value, 'the AFK command must resolve, rather than silently returning an unknown-command miss');
       assert.equal(envelope.value.result.kind, 'success', envelope.value.result.text);
-      return JSON.parse(envelope.value.result.text);
+      assert.ok(typeof envelope.value.result.text === 'string');
+      return /** @type {import('../types/test.js').FixtureCommandValue<L>} */ (/** @type {unknown} */ (JSON.parse(envelope.value.result.text)));
     };
     const initialA = await success(a.id, '/afk');
     const initialB = await success(b.id, '/afk');
@@ -148,10 +176,11 @@ test('real rc.2 ClientRemote commands namespace requires remote.commands and exe
     assert.equal(initialA.total, 0);
     assert.equal(initialB.total, 0);
     const ordinaryArgs = { questions: [{ id: 'off-question', question: 'An ordinary question while AFK is off?' }] };
-    b.session.append('tool/call', { turn: 1, step: 0, callId: 'ordinary-off-call', name: 'ask_user_question', arguments: JSON.stringify(ordinaryArgs) });
-    const ordinary = await host.tools.execute({ callId: 'ordinary-off-call', name: 'ask_user_question', arguments: ordinaryArgs, agent: b, signal: signal() });
+    const ordinaryCall = /** @type {import('@deepseek-ai/dsh-llm').ToolCallId} */ ('ordinary-off-call');
+    b.session.append('tool/call', { turn: 1, step: 0, callId: ordinaryCall, name: 'ask_user_question', arguments: JSON.stringify(ordinaryArgs) });
+    const ordinary = await host.tools.execute({ callId: ordinaryCall, name: 'ask_user_question', arguments: ordinaryArgs, agent: b, signal: signal() });
     assert.equal(ordinary.isError, false);
-    b.session.append('tool/result', { turn: 1, step: 0, message: { id: 'ordinary-off-result', role: 'tool', source: { kind: 'tool', callId: 'ordinary-off-call' }, toolCallId: 'ordinary-off-call', content: ordinary.content, isError: ordinary.isError } }, { surfaceOp: 'append' });
+    b.session.append('tool/result', { turn: 1, step: 0, message: { id: /** @type {import('@deepseek-ai/dsh-llm').MessageId} */ ('ordinary-off-result'), role: 'tool', source: { kind: 'tool', callId: ordinaryCall }, toolCallId: ordinaryCall, content: ordinary.content, isError: ordinary.isError } }, { surfaceOp: 'append' });
     const ordinaryHistory = await success(b.id, '/afk history 0 20');
     assert.equal(ordinaryHistory.total, 1);
     assert.equal(ordinaryHistory.unread, 1);
@@ -172,16 +201,17 @@ test('real rc.2 ClientRemote commands namespace requires remote.commands and exe
     // Populate the archive through the actual Tool and final Session events,
     // then page it using the real generated Client namespace and Host command.
     for (let index = 0; index < 3; index++) {
-      const callId = `afk-client-remote-call-${index}`;
+      const callId = /** @type {import('@deepseek-ai/dsh-llm').ToolCallId} */ (`afk-client-remote-call-${index}`);
       const args = { questions: [{ id: `question-${index}`, question: `Fixture question ${index}?`, options: [{ label: 'Recommended' }, { label: 'Alternative' }] }] };
       a.session.append('tool/call', { turn: 1, step: index, callId, name: 'ask_user_question', arguments: JSON.stringify(args) });
-      const outcome = await host.tools.execute({ callId, name: 'ask_user_question', arguments: args, agent: a, signal: signal() });
+      // The real ASK output schema validates this value before returning it.
+      const outcome = /** @type {import('../types/test.js').FixtureToolResult<'ask_user_question'>} */ (/** @type {unknown} */ (await host.tools.execute({ callId, name: 'ask_user_question', arguments: args, agent: a, signal: signal() })));
       assert.equal(outcome.isError, false);
       assert.deepEqual(outcome.value.answers[0].selected, []);
-      assert.ok(outcome.value.answers[0].custom.endsWith(replyA));
+      assert.ok(outcome.value.answers[0].custom?.endsWith(replyA));
       a.session.append('tool/result', {
         turn: 1, step: index,
-        message: { id: `afk-client-remote-result-${index}`, role: 'tool', source: { kind: 'tool', callId }, toolCallId: callId, content: outcome.content, isError: outcome.isError },
+        message: { id: /** @type {import('@deepseek-ai/dsh-llm').MessageId} */ (`afk-client-remote-result-${index}`), role: 'tool', source: { kind: 'tool', callId }, toolCallId: callId, content: outcome.content, isError: outcome.isError },
       }, { surfaceOp: 'append' });
     }
     const first = await success(a.id, '/afk history 0 2');
@@ -228,7 +258,9 @@ test('real rc.2 ClientRemote commands namespace requires remote.commands and exe
     const beforeBadSave = await success(a.id, '/afk');
     const invalidSettings = await remoteExecute(a.id, `/afk set ${JSON.stringify({ ...setA, reply: '   ' })}`);
     assert.equal(invalidSettings.ok, true, 'a settled business failure is not a carrier failure');
+    assert.ok(invalidSettings.value);
     assert.equal(invalidSettings.value.result.kind, 'error');
+    assert.ok(typeof invalidSettings.value.result.text === 'string');
     assert.match(invalidSettings.value.result.text, /AFK/);
     const invalidPage = await remoteExecute(a.id, '/afk history -1 20');
     assert.equal(invalidPage.ok, false, 'a thrown Host handler error is folded into the Client Remote error branch');
@@ -248,9 +280,16 @@ test('real rc.2 ClientRemote commands namespace requires remote.commands and exe
     assert.equal((await success(a.id, '/afk history 0 20 all')).total, 3, 'read acknowledgements must not delete records');
     // Programmatic plugin mounting is a supported config entry point; the real
     // Loader/Settings mutation path is covered separately by scope.test.js.
-    const savedA = { ...host.sessionProjections.stateOf(a.session, 'dsh-afk').view };
-    const savedB = { ...host.sessionProjections.stateOf(b.session, 'dsh-afk').view };
+    /** @param {import('@deepseek-ai/dsh-agent').Agent} agent */
+    const stateOf = agent => {
+      const state = host.sessionProjections.stateOf(agent.session, 'dsh-afk');
+      assert.ok(state);
+      return state;
+    };
+    const savedA = { ...stateOf(a).view };
+    const savedB = { ...stateOf(b).view };
     await afkFiber.dispose();
+    /** @type {import('../types/afk.js').AfkSettings} */
     const globalSettings = { enabled: true, mode: 'auto-reply', reply: 'Remote global reply, never human approval.' };
     hostFibers.push(await host.plugin(afk, { scope: 'global', global: globalSettings }));
     for (const agent of [a, b]) {
@@ -259,12 +298,14 @@ test('real rc.2 ClientRemote commands namespace requires remote.commands and exe
       for (const input of ['on', 'off', `set ${JSON.stringify(setA)}`]) {
         const refused = await remoteExecute(agent.id, `/afk ${input}`);
         assert.equal(refused.ok, true, 'lack of global settings authority is a settled business error');
+        assert.ok(refused.value);
         assert.equal(refused.value.result.kind, 'error');
+        assert.ok(typeof refused.value.result.text === 'string');
         assert.match(refused.value.result.text, /全局设置 UI/);
       }
     }
-    assert.deepEqual(host.sessionProjections.stateOf(a.session, 'dsh-afk').view, savedA);
-    assert.deepEqual(host.sessionProjections.stateOf(b.session, 'dsh-afk').view, savedB);
+    assert.deepEqual(stateOf(a).view, savedA);
+    assert.deepEqual(stateOf(b).view, savedB);
     assert.equal((await success(a.id, '/afk history 0 20 all')).totalAll, 3);
     assert.equal((await success(b.id, '/afk history')).totalAll, 1);
     const aBeforeReadB = await success(a.id, '/afk history 0 20 all');
@@ -272,13 +313,13 @@ test('real rc.2 ClientRemote commands namespace requires remote.commands and exe
     await success(b.id, `/afk read ${JSON.stringify([bRecord.id])}`);
     assert.equal((await success(b.id, '/afk history')).unread, 0);
     assert.deepEqual(await success(a.id, '/afk history 0 20 all'), aBeforeReadB, 'global settings do not merge Session read receipts');
-    const globalCall = 'remote-global-call';
+    const globalCall = /** @type {import('@deepseek-ai/dsh-llm').ToolCallId} */ ('remote-global-call');
     const globalArgs = { questions: [{ id: 'global-question', question: 'Global while local AFK is off?' }] };
     b.session.append('tool/call', { turn: 2, step: 0, callId: globalCall, name: 'ask_user_question', arguments: JSON.stringify(globalArgs) });
-    const automatic = await host.tools.execute({ callId: globalCall, name: 'ask_user_question', arguments: globalArgs, agent: b, signal: signal() });
+    const automatic = /** @type {import('../types/test.js').FixtureToolResult<'ask_user_question'>} */ (/** @type {unknown} */ (await host.tools.execute({ callId: globalCall, name: 'ask_user_question', arguments: globalArgs, agent: b, signal: signal() })));
     assert.equal(automatic.isError, false);
-    assert.ok(automatic.value.answers[0].custom.endsWith(globalSettings.reply));
-    b.session.append('tool/result', { turn: 2, step: 0, message: { id: 'remote-global-result', role: 'tool', source: { kind: 'tool', callId: globalCall }, toolCallId: globalCall, content: automatic.content, isError: automatic.isError } }, { surfaceOp: 'append' });
+    assert.ok(automatic.value.answers[0].custom?.endsWith(globalSettings.reply));
+    b.session.append('tool/result', { turn: 2, step: 0, message: { id: /** @type {import('@deepseek-ai/dsh-llm').MessageId} */ ('remote-global-result'), role: 'tool', source: { kind: 'tool', callId: globalCall }, toolCallId: globalCall, content: automatic.content, isError: automatic.isError } }, { surfaceOp: 'append' });
     const globalHistory = await success(b.id, '/afk history');
     assert.equal(globalHistory.records[0].afk, true);
     assert.equal(globalHistory.records[0].mode, 'auto-reply');

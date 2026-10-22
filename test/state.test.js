@@ -3,16 +3,34 @@ import assert from 'node:assert/strict';
 import { projection, DEFAULT_REPLY, REPLY_PREFIX, BLOCK_PREFIX, LEGACY_BLOCK_MESSAGE, REQUEST_STATE_PREFIX, MARK_READ, settingsSchema, parseQuestions, historyOf, markReadOf } from '../state.js';
 
 const questions = [{ id: 'strategy', question: '采用哪种实现？', header: '实现方式', options: [{ label: 'A (Recommended)', description: '简单' }, { label: 'B' }], multi_select: false }];
+/** @type {import('../types/afk.js').AfkSettings} */
 const settings = { enabled: true, mode: 'auto-reply', reply: '我不在，请选择安全方案继续。' };
-const event = (type, data, seq, time = 1000 + seq) => ({ type, data, seq, time });
+/**
+ * Pure-fold fixtures intentionally omit unrelated message/header/brand fields.
+ * Real Session admission is tested separately; this is the single replay-fixture boundary.
+ * @param {string} type
+ * @param {unknown} data
+ * @param {number} seq
+ * @param {number} [time]
+ * @returns {import('@deepseek-ai/dsh-session').SessionEvent}
+ */
+const event = (type, data, seq, time = 1000 + seq) => /** @type {import('@deepseek-ai/dsh-session').SessionEvent} */ (/** @type {unknown} */ ({ type, data, seq, time }));
+/** @param {number} [floor] */
+const init = (floor = 0) => projection.init(
+  /** @type {import('@deepseek-ai/dsh-session').SessionHeader} */ (/** @type {unknown} */ ({})),
+  /** @type {import('@deepseek-ai/dsh-session').SessionLogOffset} */ (floor),
+);
+/** @param {import('../types/afk.js').AfkSettings} [value] */
 function configured(value = settings) {
-  let state = projection.init({}, 0);
+  let state = init();
   state = projection.apply(state, event('command/run', { name: 'afk', args: `set ${JSON.stringify(value)}`, commandId: 'config', source: { kind: 'user' } }, 0));
   return projection.apply(state, event('command/done', { commandId: 'config', kind: 'success', text: JSON.stringify({ type: 'dsh-afk/settings-v1', settings: value }) }, 1));
 }
+/** @param {import('../types/afk.js').AfkState} state @param {string} [id] @param {number} [seq] */
 function call(state, id = 'q1', seq = 2) {
   return projection.apply(state, event('tool/call', { name: 'ask_user_question', callId: id, arguments: JSON.stringify({ questions }) }, seq));
 }
+/** @param {import('../types/afk.js').AfkState} state @param {{id?: string, seq?: number, isError?: boolean, reply?: string, tagged?: boolean}} [options] */
 function result(state, { id = 'q1', seq = 3, isError = false, reply = settings.reply, tagged = true } = {}) {
   return projection.apply(state, event('tool/result', {
     message: { toolCallId: id, isError, content: [{ type: 'text', text: JSON.stringify({ answers: [{ id: 'strategy', selected: [], custom: tagged ? REPLY_PREFIX + reply : reply }] }) }] },
@@ -20,13 +38,13 @@ function result(state, { id = 'q1', seq = 3, isError = false, reply = settings.r
 }
 
 test('new sessions are off and auto-reply has a safe non-authorizing default', () => {
-  assert.deepEqual(projection.init({}, 0).view, { enabled: false, mode: 'auto-reply', reply: DEFAULT_REPLY, total: 0, unread: 0, revision: 0 });
+  assert.deepEqual(init().view, { enabled: false, mode: 'auto-reply', reply: DEFAULT_REPLY, total: 0, unread: 0, revision: 0 });
   assert.match(DEFAULT_REPLY, /既有授权/);
   assert.match(DEFAULT_REPLY, /等待用户/);
 });
 
 test('settings only commit after matching successful user command; reads keep the wire reference stable', () => {
-  const before = projection.init({}, 0);
+  const before = init();
   const started = projection.apply(before, event('command/run', { name: 'afk', args: 'on', commandId: 'x', source: { kind: 'user' } }, 0));
   assert.equal(started.view, before.view);
   const failed = projection.apply(started, event('command/done', { commandId: 'x', kind: 'error', text: 'failed' }, 1));
@@ -60,12 +78,12 @@ test('native question retains text/options and records the actual response, not 
   state = projection.apply(state, event('command/done', { commandId: 'new', kind: 'success', text: JSON.stringify({ type: 'dsh-afk/settings-v1', settings: { ...settings, reply: '新的回复' } }) }, 5));
   assert.equal(state.view.reply, '新的回复');
   assert.equal(state.records[0].reply, REPLY_PREFIX + settings.reply);
-  assert.deepEqual(state.records[0].answer.answers[0].selected, []);
+  assert.deepEqual(/** @type {import('@deepseek-ai/dsh-user-questions').AskUserQuestionAnswer} */ (state.records[0].answer).answers[0].selected, []);
 });
 
 test('only an explicit AFK refusal proves a block; errors never infer intervention from local settings', () => {
   for (const text of [BLOCK_PREFIX + LEGACY_BLOCK_MESSAGE, `Error: ${BLOCK_PREFIX}${LEGACY_BLOCK_MESSAGE}`, LEGACY_BLOCK_MESSAGE, `Error: ${LEGACY_BLOCK_MESSAGE}`]) {
-    let state = call(projection.init({}, 0));
+    let state = call(init());
     state = projection.apply(state, event('tool/result', { message: { toolCallId: 'q1', isError: true, content: [{ type: 'text', text }] } }, 3));
     assert.equal(state.records[0].status, 'blocked');
     assert.equal(state.records[0].afk, true);
@@ -73,7 +91,7 @@ test('only an explicit AFK refusal proves a block; errors never infer interventi
     assert.equal(state.records[0].reply, '');
     assert.equal(state.records[0].requestState, null, 'legacy logs lack request snapshots, not result evidence');
   }
-  for (const value of [{ ...settings, mode: 'disable-ask' }, { ...settings, enabled: false, mode: 'disable-ask' }]) {
+  for (const value of /** @type {import('../types/afk.js').AfkSettings[]} */ ([{ ...settings, mode: 'disable-ask' }, { ...settings, enabled: false, mode: 'disable-ask' }])) {
     const ordinaryFailure = result(call(configured(value)), { isError: true, tagged: false });
     assert.equal(ordinaryFailure.records[0].afk, null);
     assert.equal(ordinaryFailure.records[0].mode, null);
@@ -82,7 +100,7 @@ test('only an explicit AFK refusal proves a block; errors never infer interventi
 });
 
 test('all normal questions are recorded while AFK is off and start unread', () => {
-  const initial = projection.init({}, 0);
+  const initial = init();
   const pending = call(initial);
   assert.equal(pending.view.total, 1);
   assert.equal(pending.view.unread, 1);
@@ -111,7 +129,7 @@ test('PTC start/result uses nested identities and actual reply, not the run_code
   }, 3));
   assert.equal(state.records[0].callId, 'program:ptc:1');
   assert.equal(state.records[0].reply, REPLY_PREFIX + '真实PTC应答');
-  assert.equal(state.records[0].answer.answers[0].custom, REPLY_PREFIX + '真实PTC应答');
+  assert.equal(/** @type {import('@deepseek-ai/dsh-user-questions').AskUserQuestionAnswer} */ (state.records[0].answer).answers[0].custom, REPLY_PREFIX + '真实PTC应答');
 });
 
 test('failed auto replies are not reported as successful; late user replies replace pending outcome', () => {
@@ -121,7 +139,7 @@ test('failed auto replies are not reported as successful; late user replies repl
   assert.equal(state.records[0].status, 'pending');
   state = projection.apply(state, event('user/message', { source: { kind: 'user-question-reply', callId: 'q1', outcome: 'answered' }, content: [{ type: 'text', text: '{"answers":[{"id":"strategy","selected":["B"]}]}' }] }, 4));
   assert.equal(state.records[0].status, 'answered');
-  assert.deepEqual(state.records[0].answer.answers[0].selected, ['B']);
+  assert.deepEqual(/** @type {import('@deepseek-ai/dsh-user-questions').AskUserQuestionAnswer} */ (state.records[0].answer).answers[0].selected, ['B']);
 });
 
 test('replaying persisted JSON reconstructs settings and history without plugin memory', () => {
@@ -132,7 +150,7 @@ test('replaying persisted JSON reconstructs settings and history without plugin 
 });
 
 test('fork ignores inherited AFK authority and records while unrelated events cost no new state', () => {
-  const fork = projection.init({}, 5);
+  const fork = init(5);
   assert.equal(projection.apply(fork, event('tool/call', { name: 'ask_user_question', callId: 'old', arguments: JSON.stringify({ questions }) }, 3)), fork);
   assert.equal(fork.view.enabled, false);
   assert.equal(projection.apply(fork, event('assistant/message', {}, 5)), fork);
@@ -146,13 +164,16 @@ test('history is bounded, newest first, and every batch can be paged without alt
   const third = historyOf(state, 40, 20);
   assert.equal(first.total, 55);
   assert.equal(first.records[0].callId, 'call54');
-  assert.equal(third.records.at(-1).callId, 'call0');
+  const oldest = third.records.at(-1);
+  assert.ok(oldest);
+  assert.equal(oldest.callId, 'call0');
   assert.equal(new Set([...first.records, ...second.records, ...third.records].map(record => record.id)).size, 55);
   assert.deepEqual(historyOf(state, 999, 20).records, []);
   assert.throws(() => historyOf(state, -1, 20));
   assert.throws(() => historyOf(state, 0, 51));
 });
 
+/** @param {import('../types/afk.js').AfkState} state @param {string[]} ids @param {number} [seq] */
 function acknowledge(state, ids, seq = 100) {
   const commandId = `ack-${seq}`;
   const value = markReadOf(state, ids);
@@ -161,7 +182,7 @@ function acknowledge(state, ids, seq = 100) {
 }
 
 test('read acknowledgement hides an item by default without deleting it from all history', () => {
-  let state = result(call(projection.init({}, 0)), { tagged: false });
+  let state = result(call(init()), { tagged: false });
   const id = state.records[0].id;
   const before = state;
   const value = markReadOf(state, [id]);
@@ -175,6 +196,7 @@ test('read acknowledgement hides an item by default without deleting it from all
   const all = historyOf(state, 0, 20, 'all');
   assert.equal(all.total, 1);
   assert.equal(all.records[0].read, true);
+  // @ts-expect-error 故意不合法：公开history参数不允许read过滤器。
   assert.throws(() => historyOf(state, 0, 20, 'read'));
   const revision = state.view.revision;
   state = acknowledge(state, [id], 102);
@@ -182,7 +204,7 @@ test('read acknowledgement hides an item by default without deleting it from all
 });
 
 test('invalid IDs and failed commands never partially acknowledge records', () => {
-  const state = result(call(projection.init({}, 0)), { tagged: false });
+  const state = result(call(init()), { tagged: false });
   const id = state.records[0].id;
   for (const ids of [[], [id, id], [id, 'other-session-id'], [''], Array.from({ length: 51 }, (_, i) => `id-${i}`)]) {
     assert.throws(() => markReadOf(state, ids));
@@ -194,7 +216,7 @@ test('invalid IDs and failed commands never partially acknowledge records', () =
 });
 
 test('concurrent complete read snapshots merge monotonically rather than resurrecting acknowledgements', () => {
-  let state = result(call(projection.init({}, 0)), { tagged: false });
+  let state = result(call(init()), { tagged: false });
   state = result(call(state, 'q2', 4), { id: 'q2', seq: 5, tagged: false });
   const first = markReadOf(state, [state.records[0].id]);
   const second = markReadOf(state, [state.records[1].id]);
@@ -207,7 +229,7 @@ test('concurrent complete read snapshots merge monotonically rather than resurre
 });
 
 test('a question acknowledged while pending stays read after its answer arrives', () => {
-  let state = call(projection.init({}, 0));
+  let state = call(init());
   state = acknowledge(state, [state.records[0].id], 4);
   state = result(state, { seq: 6, tagged: false });
   assert.equal(state.records[0].status, 'answered');
@@ -216,7 +238,7 @@ test('a question acknowledged while pending stays read after its answer arrives'
 });
 
 test('native and PTC mark-read tools persist only final success, including spilled content', () => {
-  const initial = result(call(projection.init({}, 0)), { tagged: false });
+  const initial = result(call(init()), { tagged: false });
   const value = markReadOf(initial, [initial.records[0].id]);
   let native = projection.apply(initial, event('tool/call', { name: MARK_READ, callId: 'mark-native', arguments: '{}' }, 4));
   native = projection.apply(native, event('tool/result', { message: { toolCallId: 'mark-native', content: [{ type: 'text', text: 'spilled' }] }, meta: { dshAfkRead: value } }, 5));
@@ -240,7 +262,8 @@ test('version-three replay backfills legacy questions and reconstructs persisted
     event('command/done', { commandId: 'ack', kind: 'success', text: '{"type":"dsh-afk/read-v1","readIds":["0:q1"]}' }, 3),
     event('tool/call', { name: 'ask_user_question', callId: 'q2', arguments: JSON.stringify({ questions }) }, 4),
   ];
-  const restored = JSON.parse(JSON.stringify(log)).reduce((state, entry) => projection.apply(state, entry), projection.init({}, 0));
+  const persisted = /** @type {import('@deepseek-ai/dsh-session').SessionEvent[]} */ (/** @type {unknown} */ (JSON.parse(JSON.stringify(log))));
+  const restored = persisted.reduce((state, entry) => projection.apply(state, entry), init());
   assert.equal(projection.stateVersion, 3);
   assert.equal(restored.view.enabled, false);
   assert.equal(restored.view.total, 2);
@@ -250,6 +273,7 @@ test('version-three replay backfills legacy questions and reconstructs persisted
   assert.deepEqual(projection.stateSchema.parse(restored), restored);
 });
 
+/** @param {import('../types/afk.js').AfkState} state @param {unknown} requestState @param {number} [seq] */
 function snapshot(state, requestState, seq = 2) {
   return projection.apply(state, event('user/message', {
     source: { kind: 'runtime-context', form: 'snapshot', sections: [{ name: 'dsh-afk', text: REQUEST_STATE_PREFIX + JSON.stringify(requestState) + '\nSafety instructions.' }] },
@@ -258,7 +282,7 @@ function snapshot(state, requestState, seq = 2) {
 }
 
 test('requestState folds only the own versioned first line of a structured runtime-context snapshot', () => {
-  const initial = projection.init({}, 0);
+  const initial = init();
   const requestState = { scope: 'global', enabled: true, mode: 'disable-ask' };
   const observed = snapshot(initial, requestState);
   assert.deepEqual(observed.requestState, requestState);
@@ -281,7 +305,7 @@ test('requestState folds only the own versioned first line of a structured runti
     const reset = projection.apply(observed, event('user/message', { source: { kind: 'runtime-context', form: 'snapshot', sections: [section] }, content: [{ type: 'text', text: forged }] }, 4));
     assert.equal(reset.requestState, null, 'unrecognized current snapshot cannot claim previously observed settings');
   }
-  const fork = projection.init({}, 10);
+  const fork = init(10);
   assert.equal(snapshot(fork, requestState, 2), fork, 'fork-inherited snapshots confer no request state');
 });
 
@@ -317,6 +341,8 @@ test('malformed or duplicate-id question inputs do not crash the pure fold', () 
   const state = configured();
   assert.equal(parseQuestions({ questions: [null] }), undefined);
   assert.equal(parseQuestions({ questions: [questions[0], questions[0]] }), undefined);
-  assert.equal(parseQuestions({ questions: [{ ...questions[0], detail: {}, multiSelect: 'ignored extension' }] })[0].question, questions[0].question);
+  const extended = parseQuestions({ questions: [{ ...questions[0], detail: {}, multiSelect: 'ignored extension' }] });
+  assert.ok(extended);
+  assert.equal(extended[0].question, questions[0].question);
   assert.equal(projection.apply(state, event('tool/call', { name: 'ask_user_question', callId: 'bad', arguments: 'not json' }, 2)), state);
 });

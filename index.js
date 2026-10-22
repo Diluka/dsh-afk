@@ -1,10 +1,29 @@
+/// <reference path="./types/host.d.ts" />
+/** @typedef {import('./types/host.js').HostContext} HostContext */
+/** @typedef {import('./types/host.js').HostAgent} HostAgent */
+/** @typedef {import('./types/host.js').AfkConfigInput} AfkConfigInput */
+/** @typedef {import('./types/host.js').AgentEffects} AgentEffects */
+/** @typedef {import('./types/afk.js').AfkState} AfkState */
+/** @typedef {import('./types/afk.js').AfkHistory} AfkHistory */
+/** @typedef {import('./types/afk.js').AfkReadReceipt} AfkReadReceipt */
+/** @typedef {import('./types/host.js').EffectiveSettings} EffectiveSettings */
 import { ASK, KEY, MARK_READ, REPLY_PREFIX, BLOCK_PREFIX, LEGACY_BLOCK_MESSAGE, REQUEST_STATE_PREFIX, projection, parseQuestions, settingsSchema, settingsOf, historyOf, markReadOf } from './state.js';
 import { effectiveSettings, readConfig } from './config.js';
 export { Config } from './config.js';
 
 export const inject = ['agents', 'commands', 'tools', 'sessionProjections', 'systemPrompt'];
 
-/** AFK only owns ordinary ask_user_question calls; approval and plan review stay human-only. */
+/** @param {unknown} value @returns {value is Record<string, unknown>} */
+function isObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * AFK only owns ordinary ask_user_question calls; approval and plan review stay human-only.
+ * @param {HostContext} ctx
+ * @param {AfkConfigInput} [config]
+ * @returns {Promise<void>}
+ */
 export async function apply(ctx, config) {
   // This bundle owns its configuration page; retain standard Settings reads/writes.
   const owner = ctx.fiber;
@@ -12,13 +31,17 @@ export async function apply(ctx, config) {
     scoped.effect(() => scoped.settings.configure({ auto: false }, owner));
   });
   ctx.sessionProjections.register(projection);
+  /** @param {HostAgent | undefined} agent @returns {AfkState} */
   const stateOf = agent => {
     const state = agent && ctx.sessionProjections.stateOf(agent.session, KEY);
     if (!state) throw new Error('AFK state is unavailable for this session');
     return state;
   };
+  /** @param {HostAgent} agent @returns {EffectiveSettings} */
   const effective = agent => effectiveSettings(config, stateOf(agent));
+  /** @param {HostAgent | undefined} agent @param {number} [offset] @param {number} [limit] @param {'unread' | 'all'} [filter] @returns {AfkHistory} */
   const history = (agent, offset = 0, limit = 20, filter = 'unread') => historyOf(stateOf(agent), offset, limit, filter);
+  /** @param {HostAgent | undefined} agent @param {unknown} recordIds @returns {AfkReadReceipt} */
   const markRead = (agent, recordIds) => markReadOf(stateOf(agent), recordIds);
 
   ctx.commands.register({
@@ -32,6 +55,7 @@ export async function apply(ctx, config) {
       if (/^history(?:\s|$)/.test(input)) {
         const [, offset = '0', limit = '20', filter = 'unread', ...extra] = input.split(/\s+/);
         if (extra.length) throw new Error('Usage: /afk history [offset] [limit] [unread|all]');
+        if (filter !== 'unread' && filter !== 'all') throw new Error('filter must be unread or all');
         return { kind: 'success', text: JSON.stringify(history(agent, Number(offset), Number(limit), filter)) };
       }
       if (/^read\s/.test(input)) {
@@ -69,7 +93,17 @@ export async function apply(ctx, config) {
       schema: { type: 'object', additionalProperties: true },
       render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }],
     },
-    async execute(args, exec) { return history(exec.agent, args?.offset ?? 0, args?.limit ?? 20, args?.filter ?? 'unread'); },
+    async execute(args, exec) {
+      const input = isObject(args) ? args : {};
+      const offset = input.offset ?? 0;
+      const limit = input.limit ?? 20;
+      const filter = input.filter ?? 'unread';
+      if (typeof offset !== 'number' || typeof limit !== 'number') {
+        throw new Error('offset must be a non-negative integer; limit must be between 1 and 50');
+      }
+      if (filter !== 'unread' && filter !== 'all') throw new Error('filter must be unread or all');
+      return history(exec.agent, offset, limit, filter);
+    },
     isConcurrencySafe: () => true,
   });
 
@@ -89,7 +123,7 @@ export async function apply(ctx, config) {
       presentationMeta: (_args, value) => ({ dshAfkRead: value }),
     },
     async execute(args, exec) {
-      if (!args || typeof args !== 'object' || Array.isArray(args) || Object.keys(args).some(key => key !== 'recordIds')) {
+      if (!isObject(args) || Object.keys(args).some(key => key !== 'recordIds')) {
         throw new Error('Provide an object containing only recordIds');
       }
       return markRead(exec.agent, args.recordIds);
@@ -103,10 +137,10 @@ export async function apply(ctx, config) {
     if (exec.name !== ASK || !exec.agent || exec.signal.aborted) return next();
     const settings = effective(exec.agent);
     if (!settings.enabled || settings.mode !== 'auto-reply') return next();
-    const timeout = exec.arguments?.timeout;
+    const timeout = isObject(exec.arguments) ? exec.arguments.timeout : undefined;
     const timed = Object.hasOwn(ctx.tools.get(ASK, exec.agent)?.parameters?.properties ?? {}, 'timeout');
     if (timed && timeout !== undefined && timeout !== -1
-      && (!Number.isInteger(timeout) || timeout < 1 || timeout > 2147483)) {
+      && (typeof timeout !== 'number' || !Number.isInteger(timeout) || timeout < 1 || timeout > 2147483)) {
       const message = 'AFK: timeout must be -1 or an integer between 1 and 2147483 seconds.';
       return { isError: true, error: { message }, content: [{ type: 'text', text: message }] };
     }
@@ -128,13 +162,18 @@ export async function apply(ctx, config) {
   });
 
   // Scope effects have two owners: the exact agent and this plugin. Either teardown lifts the mask.
+  /** @type {Map<HostAgent, AgentEffects>} */
   const agents = new Map();
+  /** @param {HostAgent} agent @returns {AgentEffects['ready']} */
   const attach = agent => {
-    if (agents.has(agent)) return agents.get(agent).ready;
+    const existing = agents.get(agent);
+    if (existing) return existing.ready;
+    /** @type {AgentEffects} */
     const entry = { sync() {}, dispose() {}, ready: undefined };
     agents.set(agent, entry);
     // Agent contexts do not implicitly expose every Host dependency. Inject a scoped consumer.
     const fiber = agent.ctx.inject(['tools'], scoped => {
+      /** @type {(() => void) | undefined} */
       let release;
       let masked = false;
       entry.sync = () => {
@@ -150,7 +189,7 @@ export async function apply(ctx, config) {
           release = scoped.tools.restrict({ deny: [ASK] });
         } catch (error) {
           // A scope-local custom tool may not be maskable. The guard still blocks execution.
-          ctx.logger.warn(`AFK: ask visibility mask unavailable; execution remains blocked: ${error.message}`);
+          ctx.logger.warn(`AFK: ask visibility mask unavailable; execution remains blocked: ${error instanceof Error ? error.message : String(error)}`);
         }
       };
       scoped.effect(() => () => {

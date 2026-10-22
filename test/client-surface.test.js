@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 // Structural delivery checks, not a substitute for rendering the real Harness page.
+// readFile(..., 'utf8') establishes the string boundary; no untyped Client globals are imported.
 const source = await readFile(process.env.DSH_TEST_PLUGIN_DIR
   ? join(process.env.DSH_TEST_PLUGIN_DIR, 'client.js') : new URL('../client.js', import.meta.url), 'utf8');
 test('active switch thumb uses the contrasting base color instead of matching a monochrome track', () => {

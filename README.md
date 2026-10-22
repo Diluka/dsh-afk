@@ -97,7 +97,11 @@ dsh plugin --profile web add "link:$PWD"
 ```bash
 pnpm install --frozen-lockfile --ignore-scripts
 pnpm run check
+pnpm run typecheck
 pnpm test
+
+# 用锁文件中固定版本的真实 DSH SDK 运行全部集成测试（不启动 DSH 或访问用户 profile）。
+DSH_TEST_RUNTIME_DIR="$PWD" pnpm test
 
 # 可选：使用明确指定的现有 DSH 安装，运行隔离的真实 Cordis/Session/Tool/Commands 集成测试。
 # 不启动服务器，不调用模型，不读取/修改真实 profile 的会话或设置。
@@ -109,3 +113,13 @@ DSH_TEST_PLUGIN_DIR=/absolute/path/to/unpacked/package pnpm test
 ```
 
 未提供 `DSH_TEST_RUNTIME_DIR` 时，真实运行时集成测试明确标记 skipped，不将单元测试冒充运行时验证。
+
+### JSDoc 与类型检查
+
+源码保持 JavaScript，无编译产物。`tsconfig.json` 对 Host、Client 和测试开启 `allowJs`、`checkJs`、`strict`、`noImplicitAny` 与 `noEmit`。共享业务模型放在 `types/afk.d.ts`，Host/Client 的宿主边界与模块加载契约由相应声明文件描述；组件 props 与函数参数用靠近实现的 JSDoc 标注。框架类型优先引用固定版本 DSH 的官方声明，不为类型添加跨插件运行时导入。
+
+TypeScript、Node/React 声明及 DSH SDK 只作为开发依赖；运行时依赖保持原有两项。由于已发布 SDK 的声明图本身不完整，`skipLibCheck` 仅避免逐行诊断声明文件内部；项目的 JavaScript 仍按严格模式完整检查。投影 SDK 的 Zod 声明通过定向 override 与本项目4.6.7对齐，避免相同 Zod 4 API 的 minor 类型身份冲突。
+
+### GitHub Actions CI
+
+每次 push、pull request 和手动触发都会在 Node.js 22 / 24 上运行冻结锁安装（禁用依赖脚本）、语法、JSDoc 类型检查、真实 SDK 集成测试和打包后集成测试。CI 使用锁定的开发 SDK 作为运行时锚点，不依赖机器上的全局 DSH，也不需要登录态、模型密钥或 profile；只要出现 skipped 检查就失败。第三方 Actions 固定到完整 commit SHA，工作流仅授予 `contents: read`，不会发布 npm 包或部署插件。

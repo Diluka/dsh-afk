@@ -1,3 +1,12 @@
+/// <reference path="./types/client.d.ts" />
+/** @import { AfkSettings, AfkQuestion, AfkHistory, AfkView, AfkPreferences } from './types/afk.js' */
+/** @import { AfkToolbarSlotProps, AfkBundleConfigProps, AfkCommandViewProps, AfkPreferencesSnapshot, ReadyAfkPreferences, LegacyProof, HistoryLoadState, HistoryRecordView, HistoryPage, CommandSummary } from './types/client.js' */
+/** @import { Translate, GlobalStandardProps } from '@deepseek-ai/dsh-client-ui-slots' */
+/** @import { CommandNode } from '@deepseek-ai/dsh-client-ui-conversation/client' */
+/** @import { CommandResult } from '@deepseek-ai/dsh-commands/types' */
+/** @import { SessionId } from '@deepseek-ai/dsh-session/types' */
+/** @import { SessionBinding, SessionReference } from '@deepseek-ai/dsh-api-session-controller/client' */
+/** @import { ConfigForm } from '@deepseek-ai/dsh-client-ui-settings/client' */
 window.__ModuleLoader__.load({
   id: 'dsh-afk',
   factory(require) {
@@ -138,12 +147,62 @@ window.__ModuleLoader__.load({
 .dsh-afk-answer { max-height: 240px; padding: 8px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; border-radius: 6px; background: var(--dsw-alias-bg-layer-2); font-size: 12px; }
 .dsh-afk-record summary { cursor: pointer; color: var(--dsw-alias-label-secondary); font-size: 12px; }
 `;
+    /** @param {AfkSettings} view @returns {AfkSettings} */
     const settingsOf = view => ({ enabled: view.enabled, mode: view.mode, reply: view.reply });
+    /** @param {unknown} reply @returns {reply is string} */
     const validReply = reply => typeof reply === 'string' && reply.trim().length > 0 && reply.length <= 2000;
-    const failureText = (error, t) => error?.message || t('error.generic');
+    /** @param {unknown} error @param {Translate} t @returns {string} */
+    const failureText = (error, t) => error && typeof error === 'object' && 'message' in error
+      && typeof error.message === 'string' && error.message ? error.message : t('error.generic');
     const emptySource = { subscribe: () => () => {}, getSnapshot: () => undefined };
 
+    /** @param {unknown} value @returns {value is Record<string, unknown>} */
+    function isObject(value) {
+      return value !== null && typeof value === 'object' && !Array.isArray(value);
+    }
+
+    /** @param {unknown} value @returns {value is AfkSettings} */
+    function isAfkSettings(value) {
+      return isObject(value) && typeof value.enabled === 'boolean'
+        && (value.mode === 'auto-reply' || value.mode === 'disable-ask') && typeof value.reply === 'string';
+    }
+
+    /** @param {unknown} value @returns {value is AfkQuestion} */
+    function isQuestion(value) {
+      return isObject(value) && typeof value.id === 'string' && typeof value.question === 'string'
+        && (value.header === undefined || typeof value.header === 'string')
+        && (value.detail === undefined || typeof value.detail === 'string')
+        && (value.multiSelect === undefined || typeof value.multiSelect === 'boolean')
+        && (value.options === undefined || (Array.isArray(value.options) && value.options.every(
+          /** @param {unknown} option */ option => isObject(option) && typeof option.label === 'string'
+            && (option.description === undefined || typeof option.description === 'string'))));
+    }
+
+    /** @param {unknown} value @returns {value is HistoryRecordView} */
+    function isHistoryRecord(value) {
+      return isObject(value) && typeof value.id === 'string' && typeof value.callId === 'string'
+        && typeof value.time === 'number' && Number.isFinite(value.time)
+        && typeof value.reply === 'string' && typeof value.read === 'boolean'
+        && (value.status === 'pending' || value.status === 'auto-replied' || value.status === 'blocked'
+          || value.status === 'answered' || value.status === 'failed')
+        && Array.isArray(value.questions) && value.questions.every(isQuestion);
+    }
+
+    /**
+     * Narrow the command's untrusted JSON before it reaches React props.
+     * @param {unknown} value @param {number} offset @param {AfkHistory['filter']} filter
+     * @returns {value is HistoryPage}
+     */
+    function isHistory(value, offset, filter) {
+      return isObject(value) && typeof value.total === 'number' && Number.isSafeInteger(value.total) && value.total >= 0
+        && value.offset === offset && value.limit === PAGE_SIZE && value.filter === filter
+        && typeof value.totalAll === 'number' && Number.isSafeInteger(value.totalAll) && value.totalAll >= 0
+        && typeof value.unread === 'number' && Number.isSafeInteger(value.unread) && value.unread >= 0
+        && Array.isArray(value.records) && value.records.every(isHistoryRecord);
+    }
+
     // Presentation only: preserve the command JSON for the UI and durable receipts.
+    /** @param {CommandNode} node @param {Translate} t @returns {CommandSummary} */
     function commandSummary(node, t) {
       if (!node.outcome) return { state: 'running', text: t('command.running') };
       const raw = typeof node.outcome.text === 'string' ? node.outcome.text.trim() : '';
@@ -151,10 +210,13 @@ window.__ModuleLoader__.load({
         const reason = /^[{[]/.test(raw) ? '' : raw.replace(/\s+/g, ' ').slice(0, 240);
         return { state: 'error', text: t('command.failed') + (reason ? `：${reason}` : '') };
       }
-      let data;
-      try { data = JSON.parse(raw); } catch {}
-      const count = value => Number.isSafeInteger(value) && value >= 0;
-      if (data && typeof data === 'object' && !Array.isArray(data)) {
+      /** @type {unknown} */
+      let decoded;
+      try { decoded = JSON.parse(raw); } catch {}
+      /** @param {unknown} value @returns {value is number} */
+      const count = value => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+      if (decoded && typeof decoded === 'object' && !Array.isArray(decoded)) {
+        const data = /** @type {Record<string, unknown>} */ (decoded);
         if (data.type === 'dsh-afk/read-v1' && Array.isArray(data.readIds)) {
           return { state: 'success', text: t('command.read') };
         }
@@ -165,7 +227,8 @@ window.__ModuleLoader__.load({
           return { state: 'success', text: t('command.history.total', { total: data.total }) };
         }
         const settings = data.type === 'dsh-afk/settings-v1' ? data.settings : data;
-        if (settings && typeof settings.enabled === 'boolean' && ['auto-reply', 'disable-ask'].includes(settings.mode)) {
+        if (settings && typeof settings === 'object' && 'enabled' in settings && typeof settings.enabled === 'boolean'
+          && 'mode' in settings && (settings.mode === 'auto-reply' || settings.mode === 'disable-ask')) {
           const scope = data.type === 'dsh-afk/settings-v1' ? 'session' : data.scope ?? 'session';
           const parts = [t(settings.enabled ? 'command.on' : 'command.off')];
           if (scope === 'session' || scope === 'global') parts.push(t(scope === 'global' ? 'scope.global' : 'scope.session'));
@@ -174,16 +237,24 @@ window.__ModuleLoader__.load({
         }
       }
       // Unknown/malformed machine payloads are never dumped into Chat.
-      const plain = data === undefined && !/^[{[]/.test(raw) ? raw.replace(/\s+/g, ' ').slice(0, 240) : '';
+      const plain = decoded === undefined && !/^[{[]/.test(raw) ? raw.replace(/\s+/g, ' ').slice(0, 240) : '';
       return { state: 'success', text: plain || t('command.done') };
     }
 
+    /**
+     * @param {{ checked: boolean, disabled: boolean, label: string, text: string,
+     *   onChange: (checked: boolean) => void, title?: string }} props
+     */
     function Switch({ checked, disabled, label, text, onChange, title }) {
       return h('button', { type: 'button', className: 'dsh-afk-switch', role: 'switch',
         'aria-checked': checked, 'aria-label': label, title, disabled, onClick: () => onChange(!checked) },
       text, h('span', { className: 'dsh-afk-track', 'aria-hidden': true }, h('span', { className: 'dsh-afk-thumb' })));
     }
 
+    /**
+     * @param {{ record: HistoryRecordView, t: Translate, language: string,
+     *   onMarkRead: (id: string) => void, marking: string }} props
+     */
     function HistoryRecord({ record, t, language, onMarkRead, marking }) {
       const date = new Date(record.time);
       const validDate = Number.isFinite(date.getTime());
@@ -214,15 +285,20 @@ window.__ModuleLoader__.load({
         ctx.effect(() => ctx.locale.register(KEY, 'en', dictionaries.en));
         ctx.effect(() => ctx.locale.register(KEY, 'zh', dictionaries.zh));
         const t = ctx.locale.bind(KEY);
+        /** @param {() => void} listener */
         const subscribeLocale = listener => ctx.locale.subscribe(listener);
         const localeSnapshot = () => ctx.locale.getSnapshot();
         const useLanguage = () => React.useSyncExternalStore(subscribeLocale, localeSnapshot, localeSnapshot).active;
+        /** @type {ConfigForm<AfkPreferences>} */
         const preferencesForm = ctx.configForms.get(KEY);
+        /** @param {() => void} listener */
         const subscribePreferences = listener => preferencesForm.subscribe(listener);
         const preferencesSnapshot = () => preferencesForm.getSnapshot();
         const settingsMirror = ctx.configForms.describe();
+        /** @param {() => void} listener */
         const subscribeMirror = listener => settingsMirror.subscribe(listener);
         const mirrorSnapshot = () => settingsMirror.getSnapshot();
+        /** @returns {AfkPreferencesSnapshot} */
         function usePreferences() {
           const snapshot = React.useSyncExternalStore(subscribePreferences, preferencesSnapshot, preferencesSnapshot);
           const mirror = React.useSyncExternalStore(subscribeMirror, mirrorSnapshot, mirrorSnapshot);
@@ -230,25 +306,33 @@ window.__ModuleLoader__.load({
           return React.useMemo(() => !mirror.view && mirror.error
             ? { ...snapshot, status: 'unavailable' } : snapshot, [snapshot, mirror]);
         }
+        /** @param {AfkPreferencesSnapshot} snapshot @returns {snapshot is ReadyAfkPreferences} */
         const preferencesReady = snapshot => Boolean(snapshot.status === 'ready' && snapshot.value
           && ['session', 'global'].includes(snapshot.value.scope) && snapshot.value.global
-          && Number.isSafeInteger(snapshot.revision) && snapshot.revision >= 0);
+          && typeof snapshot.revision === 'number' && Number.isSafeInteger(snapshot.revision) && snapshot.revision >= 0);
+        /** @param {boolean} accepted */
         const requireAccepted = accepted => { if (!accepted) throw new Error(t('error.conflict')); };
+        /** @param {Extract<CommandResult, { kind: 'success' }>} result */
         const legacyStatus = result => {
+          if (typeof result.text !== 'string') return false;
+          /** @type {unknown} */
           const status = JSON.parse(result.text);
-          return Boolean(status && !Object.hasOwn(status, 'scope') && typeof status.enabled === 'boolean'
-            && ['auto-reply', 'disable-ask'].includes(status.mode) && validReply(status.reply));
+          return Boolean(isObject(status) && !Object.hasOwn(status, 'scope') && typeof status.enabled === 'boolean'
+            && (status.mode === 'auto-reply' || status.mode === 'disable-ask') && validReply(status.reply));
         };
         let connectionEpoch = 0;
+        /** @type {Set<() => void>} */
         const connectionListeners = new Set();
         const connectionSnapshot = () => connectionEpoch;
-        const subscribeConnection = listener => { connectionListeners.add(listener); return () => connectionListeners.delete(listener); };
+        /** @param {() => void} listener */
+        const subscribeConnection = listener => { connectionListeners.add(listener); return () => { connectionListeners.delete(listener); }; };
         ctx.on('connection/reset', () => {
           connectionEpoch++;
           for (const listener of connectionListeners) listener();
         });
         ctx.effect(() => () => connectionListeners.clear());
 
+        /** @param {SessionId} sessionId @param {string} line @param {AbortSignal} signal */
         async function execute(sessionId, line, signal) {
           const res = await ctx.remote.commands.execute(sessionId, line, [], signal);
           if (!res.ok) throw new Error(res.error.message);
@@ -257,7 +341,7 @@ window.__ModuleLoader__.load({
           return res.value.result;
         }
 
-        const AfkCommandView = React.memo(function AfkCommandView({ node }) {
+        const AfkCommandView = React.memo(/** @param {AfkCommandViewProps} props */ function AfkCommandView({ node }) {
           const language = useLanguage();
           const summary = React.useMemo(() => commandSummary(node, t), [node.outcome, language]);
           return h('div', { className: 'dsh-afk-command', 'data-state': summary.state,
@@ -267,11 +351,15 @@ window.__ModuleLoader__.load({
         });
 
         // Session controls: AFK switch and current-session history, never plugin settings.
+        /**
+         * @param {{ sessionId: SessionId, view: AfkView | undefined, allowed: boolean,
+         *   globalAllowed: boolean, language: string }} props
+         */
         function Toolbar({ sessionId, view, allowed, globalAllowed, language }) {
           const preferences = usePreferences();
           const ready = preferencesReady(preferences);
           const global = ready && preferences.value.scope === 'global';
-          const [legacyProof, setLegacyProof] = React.useState(null);
+          const [legacyProof, setLegacyProof] = React.useState(/** @type {LegacyProof | null} */ (null));
           const epoch = React.useSyncExternalStore(subscribeConnection, connectionSnapshot, connectionSnapshot);
           const legacy = preferences.status === 'unavailable' && legacyProof?.snapshot === preferences
             && legacyProof.epoch === epoch && legacyProof.legacy;
@@ -291,11 +379,12 @@ window.__ModuleLoader__.load({
           const [historyOpen, setHistoryOpen] = React.useState(false);
           const [saving, setSaving] = React.useState(false);
           const [error, setError] = React.useState('');
-          const request = React.useRef(null);
+          const request = React.useRef(/** @type {AbortController | null} */ (null));
           React.useEffect(() => {
             setSaving(false);
             return () => { request.current?.abort(); request.current = null; };
           }, [epoch]);
+          /** @param {boolean} enabled */
           async function toggle(enabled) {
             if ((!global && !view) || !writable || request.current || connectionSnapshot() !== epoch) return;
             const controller = new AbortController();
@@ -306,6 +395,7 @@ window.__ModuleLoader__.load({
               if (global) {
                 requireAccepted(await preferencesForm.mutate([{ op: 'set', path: ['global', 'enabled'], value: enabled }], preferences.revision));
               } else {
+                if (!view) return;
                 if (legacy) {
                   const status = await execute(sessionId, '/afk', controller.signal);
                   if (!stillCurrent()) return;
@@ -331,6 +421,7 @@ window.__ModuleLoader__.load({
             historyOpen ? h(HistoryDialog, { sessionId, view, allowed, language, onClose: () => setHistoryOpen(false) }) : null,
             error ? h('span', { className: 'dsh-afk-error', role: 'alert' }, error) : null);
         }
+        /** @param {AfkToolbarSlotProps} props */
         function AfkSlot(props) {
           const language = useLanguage();
           const view = props.useProjection(KEY);
@@ -339,14 +430,18 @@ window.__ModuleLoader__.load({
           return h(Toolbar, { key: props.sessionId, sessionId: props.sessionId, view, allowed, globalAllowed, language });
         }
 
+        /**
+         * @param {{ sessionId: SessionId, total: number, unread: number, revision: number | undefined,
+         *   allowed: boolean, language: string }} props
+         */
         function QuestionHistory({ sessionId, total, unread, revision, allowed, language }) {
-          const [filter, setFilter] = React.useState('unread');
+          const [filter, setFilter] = /** @type {[AfkHistory['filter'], React.Dispatch<React.SetStateAction<AfkHistory['filter']>>]} */ (React.useState('unread'));
           const [offset, setOffset] = React.useState(0);
           const [refresh, setRefresh] = React.useState(0);
           const [marking, setMarking] = React.useState('');
           const [readError, setReadError] = React.useState('');
-          const [history, setHistory] = React.useState({ loading: true, data: null, error: '' });
-          const markRequest = React.useRef(null);
+          const [history, setHistory] = React.useState(/** @type {HistoryLoadState} */ ({ loading: true, data: null, error: '' }));
+          const markRequest = React.useRef(/** @type {AbortController | null} */ (null));
           React.useEffect(() => () => markRequest.current?.abort(), []);
           React.useEffect(() => {
             if (!allowed) { setHistory({ loading: false, data: null, error: t('forbidden') }); return; }
@@ -355,11 +450,9 @@ window.__ModuleLoader__.load({
             setHistory({ loading: true, data: null, error: '' });
             execute(sessionId, `/afk history ${offset} ${PAGE_SIZE} ${filter}`, controller.signal)
               .then(result => {
-                const data = JSON.parse(result.text);
-                if (!Number.isSafeInteger(data.total) || data.total < 0 || data.offset !== offset || data.limit !== PAGE_SIZE
-                  || data.filter !== filter || !Number.isSafeInteger(data.totalAll) || !Number.isSafeInteger(data.unread)
-                  || !Array.isArray(data.records) || !data.records.every(record => record && typeof record.id === 'string'
-                    && typeof record.read === 'boolean' && Array.isArray(record.questions))) {
+                /** @type {unknown} */
+                const data = typeof result.text === 'string' ? JSON.parse(result.text) : undefined;
+                if (!isHistory(data, offset, filter)) {
                   throw new Error(t('error.history'));
                 }
                 if (!active) return;
@@ -372,6 +465,7 @@ window.__ModuleLoader__.load({
               .catch(failure => { if (active) setHistory({ loading: false, data: null, error: failureText(failure, t) }); });
             return () => { active = false; controller.abort(); };
           }, [sessionId, allowed, revision, offset, refresh, filter]);
+          /** @param {string} id */
           async function markRead(id) {
             if (!allowed || markRequest.current) return;
             const controller = new AbortController();
@@ -389,14 +483,14 @@ window.__ModuleLoader__.load({
             h('div', { className: 'dsh-afk-row' }, h('h3', null, t('history.count', { total: data?.total ?? (filter === 'unread' ? unread : total) })),
               h('button', { type: 'button', className: 'dsh-afk-button', disabled: !allowed || busy, onClick: () => setRefresh(value => value + 1) }, t('history.refresh'))),
             h('div', { className: 'dsh-afk-filters', role: 'tablist', 'aria-label': t('history.title') },
-              ['unread', 'all'].map(value => h('button', { key: value, type: 'button', role: 'tab', className: 'dsh-afk-button',
+              (/** @type {const} */ (['unread', 'all'])).map(value => h('button', { key: value, type: 'button', role: 'tab', className: 'dsh-afk-button',
                 'aria-selected': filter === value, disabled: Boolean(marking),
                 onClick: () => { setFilter(value); setOffset(0); setReadError(''); } }, t(value === 'unread' ? 'history.unread' : 'history.all')))),
             h('p', { className: 'dsh-afk-muted' }, t('history.hintAll')),
             history.loading ? h('p', { role: 'status' }, t('history.loading')) : null,
             history.error || readError ? h('p', { className: 'dsh-afk-error', role: 'alert' }, history.error || readError) : null,
             data?.records.length === 0 ? h('p', { className: 'dsh-afk-muted' }, t(filter === 'unread' ? 'history.emptyUnread' : 'history.empty')) : null,
-            data?.records.length > 0 ? h('ol', { className: 'dsh-afk-history-list' }, data.records.map(record => h(HistoryRecord, {
+            data && data.records.length > 0 ? h('ol', { className: 'dsh-afk-history-list' }, data.records.map(record => h(HistoryRecord, {
               key: record.id, record, t, language, onMarkRead: markRead, marking,
             }))) : null,
             data && data.total > 0 ? h('nav', { className: 'dsh-afk-row', 'aria-label': t('history.title') },
@@ -405,17 +499,23 @@ window.__ModuleLoader__.load({
                 h('button', { type: 'button', className: 'dsh-afk-button', disabled: busy || offset === 0, onClick: () => setOffset(value => Math.max(0, value - PAGE_SIZE)) }, t('history.previous')),
                 h('button', { type: 'button', className: 'dsh-afk-button', disabled: busy || offset + PAGE_SIZE >= data.total, onClick: () => setOffset(value => value + PAGE_SIZE) }, t('history.next')))) : null);
         }
+        /**
+         * @param {{ sessionId: SessionId, view: AfkView | undefined, allowed: boolean,
+         *   language: string, onClose: () => void }} props
+         */
         function HistoryDialog({ sessionId, view, allowed, language, onClose }) {
-          const ref = React.useRef(null);
-          const close = React.useRef(null);
+          const ref = React.useRef(/** @type {HTMLDivElement | null} */ (null));
+          const close = React.useRef(/** @type {HTMLButtonElement | null} */ (null));
           const id = React.useId();
           React.useEffect(() => {
             const dialog = ref.current;
+            if (!dialog) return;
             const previousFocus = document.activeElement;
             // Native manual popover enters the top layer without making the application inert or drawing a mask.
             // Older engines fall back to the same component-owned fixed window.
             if (typeof dialog.showPopover === 'function') dialog.showPopover();
             close.current?.focus();
+            /** @param {KeyboardEvent} event */
             const escape = event => {
               if (event.key === 'Escape' && !event.defaultPrevented) { event.preventDefault(); onClose(); }
             };
@@ -433,6 +533,12 @@ window.__ModuleLoader__.load({
             h(QuestionHistory, { key: sessionId, sessionId, total: view?.total ?? 0, unread: view?.unread ?? 0, revision: view?.revision, allowed, language }));
         }
 
+        /**
+         * @typedef {{ view: AfkSettings, allowed: boolean, language: string } &
+         *   ({ global: true, revision: number, sessionId?: never } |
+         *    { global?: false, sessionId: SessionId, revision?: never })} SettingsEditorProps
+         */
+        /** @param {SettingsEditorProps} props */
         function SessionSettings({ sessionId, view, allowed, global = false, revision }) {
           const [draft, setDraft] = React.useState(() => settingsOf(view));
           const [dirty, setDirty] = React.useState(false);
@@ -446,9 +552,10 @@ window.__ModuleLoader__.load({
           const [saving, setSaving] = React.useState(false);
           const [error, setError] = React.useState('');
           const [saved, setSaved] = React.useState(false);
-          const request = React.useRef(null);
+          const request = React.useRef(/** @type {AbortController | null} */ (null));
           const ids = React.useId();
           React.useEffect(() => () => request.current?.abort(), []);
+          /** @param {React.FormEvent<HTMLFormElement>} event */
           async function save(event) {
             event.preventDefault();
             if (!allowed || request.current || !validReply(draft.reply)) return;
@@ -457,7 +564,7 @@ window.__ModuleLoader__.load({
             setSaving(true); setError(''); setSaved(false);
             try {
               if (global) {
-                const accepted = await preferencesForm.mutate([{ op: 'set', path: ['global'], value: draft }], baseRevision.current);
+                const accepted = await preferencesForm.mutate([{ op: 'set', path: ['global'], value: { ...draft } }], baseRevision.current);
                 if (!accepted && !controller.signal.aborted) {
                   const latest = preferencesForm.getSnapshot();
                   if (preferencesReady(latest)) {
@@ -468,28 +575,30 @@ window.__ModuleLoader__.load({
                 requireAccepted(accepted);
                 baseRevision.current = preferencesForm.getSnapshot().revision;
               } else {
+                if (!sessionId) throw new Error(t('unavailable'));
                 await execute(sessionId, `/afk set ${JSON.stringify(draft)}`, controller.signal);
               }
               if (!controller.signal.aborted) { setSaved(true); setDirty(false); }
             } catch (failure) { if (!controller.signal.aborted) setError(failureText(failure, t)); }
             finally { if (!controller.signal.aborted) { request.current = null; setSaving(false); } }
           }
+          /** @param {Partial<AfkSettings>} patch */
           function change(patch) { setDraft(previous => ({ ...previous, ...patch })); setDirty(true); setSaved(false); setError(''); }
           return h(React.Fragment, null,
             h('section', { className: 'dsh-afk-section' }, h('h3', null, t(global ? 'settings.global' : 'settings.title')),
               !allowed ? h('p', { className: 'dsh-afk-error' }, t('forbidden')) : null,
               h('form', { onSubmit: save },
                 h('label', { className: 'dsh-afk-row' }, t(global ? 'settings.enabled.global' : 'settings.enabled'),
-                  h('input', { type: 'checkbox', checked: draft.enabled, disabled: !allowed || saving, onChange: event => change({ enabled: event.target.checked }) })),
+                  h('input', { type: 'checkbox', checked: draft.enabled, disabled: !allowed || saving, onChange: (/** @type {React.ChangeEvent<HTMLInputElement>} */ event) => change({ enabled: event.target.checked }) })),
                 h('fieldset', { className: 'dsh-afk-fieldset', disabled: !allowed || saving },
                   h('legend', null, t('mode.title')),
-                  ['auto-reply', 'disable-ask'].map(mode => h('label', { className: 'dsh-afk-mode', key: mode },
+                  (/** @type {const} */ (['auto-reply', 'disable-ask'])).map(mode => h('label', { className: 'dsh-afk-mode', key: mode },
                     h('input', { type: 'radio', name: `${ids}-mode`, checked: draft.mode === mode, onChange: () => change({ mode }) }),
                     h('span', null, t(mode === 'auto-reply' ? 'mode.auto' : 'mode.disable'),
                       h('div', { className: 'dsh-afk-muted' }, t(mode === 'auto-reply' ? 'mode.auto.detail' : 'mode.disable.detail')))))),
                 h('label', { className: 'dsh-afk-label', htmlFor: `${ids}-reply` }, t('reply.label')),
                 h('textarea', { id: `${ids}-reply`, className: 'dsh-afk-reply', rows: 3, maxLength: 2000, required: true,
-                  value: draft.reply, disabled: !allowed || saving, onChange: event => change({ reply: event.target.value }),
+                  value: draft.reply, disabled: !allowed || saving, onChange: (/** @type {React.ChangeEvent<HTMLTextAreaElement>} */ event) => change({ reply: event.target.value }),
                   'aria-invalid': !validReply(draft.reply), 'aria-describedby': `${ids}-hint` }),
                 h('p', { id: `${ids}-hint`, className: 'dsh-afk-muted' }, t('reply.hint')),
                 !validReply(draft.reply) ? h('p', { className: 'dsh-afk-error' }, t('reply.required')) : null,
@@ -501,16 +610,21 @@ window.__ModuleLoader__.load({
                 saved ? h('p', { className: 'dsh-afk-success', role: 'status' }, t('saved')) : null)));
         }
 
+        /** @param {{ binding: SessionBinding, sessionId: SessionId, allowed: boolean, language: string }} props */
         function BoundSettings({ binding, sessionId, allowed, language }) {
           const source = React.useMemo(() => binding.session.projections.faceOf(KEY), [binding]);
           const view = React.useSyncExternalStore(listener => source.subscribe(listener), () => source.getSnapshot(), emptySource.getSnapshot);
-          return view ? h(SessionSettings, { key: sessionId, sessionId, view, allowed, language }) : h('p', { role: 'status' }, t('unavailable'));
+          return isAfkSettings(view) ? h(SessionSettings, { key: sessionId, sessionId, view, allowed, language }) : h('p', { role: 'status' }, t('unavailable'));
         }
+        /**
+         * @param {{ sessionId: SessionId, useSessionAccess: GlobalStandardProps['useSessionAccess'], language: string }} props
+         */
         function RetainedSettings({ sessionId, useSessionAccess, language }) {
           const allowed = useSessionAccess(sessionId, 'commands/execute');
-          const [state, setState] = React.useState({ binding: null, error: '' });
+          const [state, setState] = React.useState(/** @type {{ binding: SessionBinding | null, error: string }} */ ({ binding: null, error: '' }));
           React.useEffect(() => {
             const controller = new AbortController();
+            /** @type {SessionReference | undefined} */
             let reference;
             let active = true;
             setState({ binding: null, error: '' });
@@ -524,6 +638,7 @@ window.__ModuleLoader__.load({
           if (state.error) return h('p', { className: 'dsh-afk-error', role: 'alert' }, state.error);
           return state.binding ? h(BoundSettings, { binding: state.binding, sessionId, allowed, language }) : h('p', { role: 'status' }, t('loading'));
         }
+        /** @param {{ preferences: ReadyAfkPreferences, allowed: boolean }} props */
         function ScopeSettings({ preferences, allowed }) {
           const [draft, setDraft] = React.useState(preferences.value.scope);
           const [dirty, setDirty] = React.useState(false);
@@ -531,7 +646,7 @@ window.__ModuleLoader__.load({
           const [error, setError] = React.useState('');
           const [saved, setSaved] = React.useState(false);
           const baseRevision = React.useRef(preferences.revision);
-          const request = React.useRef(null);
+          const request = React.useRef(/** @type {AbortController | null} */ (null));
           const id = React.useId();
           React.useEffect(() => () => request.current?.abort(), []);
           React.useEffect(() => {
@@ -540,6 +655,7 @@ window.__ModuleLoader__.load({
               setDraft(preferences.value.scope); setSaved(false);
             }
           }, [dirty, preferences]);
+          /** @param {React.FormEvent<HTMLFormElement>} event */
           async function save(event) {
             event.preventDefault();
             if (!allowed || request.current) return;
@@ -566,7 +682,11 @@ window.__ModuleLoader__.load({
             h('form', { onSubmit: save },
               h('label', { className: 'dsh-afk-label', htmlFor: id }, t('scope.title')),
               h('select', { id, className: 'dsh-afk-select dsh-afk-scope-select', value: draft, disabled: !allowed || saving,
-                onChange: event => { setDraft(event.target.value); setDirty(true); setSaved(false); setError(''); } },
+                onChange: (/** @type {React.ChangeEvent<HTMLSelectElement>} */ event) => {
+                   const value = event.target.value;
+                   if (value !== 'session' && value !== 'global') return;
+                   setDraft(value); setDirty(true); setSaved(false); setError('');
+                 } },
                 ['session', 'global'].map(value => h('option', { key: value, value }, t(value === 'session' ? 'scope.session' : 'scope.global')))),
               draft === 'global' ? h('p', { className: 'dsh-afk-muted' }, t('scope.global.hint')) : null,
               h('button', { type: 'submit', className: 'dsh-afk-button dsh-afk-primary', disabled: !allowed || saving || !dirty }, t(saving ? 'saving' : 'scope.apply')),
@@ -574,6 +694,7 @@ window.__ModuleLoader__.load({
               error ? h('p', { className: 'dsh-afk-error', role: 'alert' }, error) : null,
               saved ? h('p', { className: 'dsh-afk-success', role: 'status' }, t('saved')) : null));
         }
+        /** @param {AfkBundleConfigProps} props */
         function SettingsPage(props) {
           const language = useLanguage();
           const preferences = usePreferences();
@@ -581,7 +702,7 @@ window.__ModuleLoader__.load({
           const globalAllowed = props.useRemoteAccess('settings/mutate') && preferences.writable;
           const catalog = props.useSessions(state => state);
           const current = catalog.ids.find(id => (catalog.byId[id]?.retainedBy.mainView ?? 0) > 0);
-          const [selected, setSelected] = React.useState(() => current || '');
+          const [selected, setSelected] = React.useState(/** @returns {SessionId | ''} */ () => current || '');
           React.useEffect(() => { if (!selected && current) setSelected(current); }, [selected, current]);
           const sessionId = selected;
           return h('div', { className: 'dsh-afk dsh-afk-page' }, h('style', null, css),
@@ -592,11 +713,16 @@ window.__ModuleLoader__.load({
                 : h('section', { className: 'dsh-afk-section' },
                   h('p', { className: 'dsh-afk-muted' }, t('settings.scope')),
                   h('label', { className: 'dsh-afk-label' }, t('settings.session'),
-                    h('select', { className: 'dsh-afk-select', value: sessionId, onChange: event => setSelected(event.target.value) },
+                    h('select', { className: 'dsh-afk-select', value: sessionId, onChange: (/** @type {React.ChangeEvent<HTMLSelectElement>} */ event) => {
+                       const value = event.target.value;
+                       // Preserve the SDK brand only for identities from this Host's catalog.
+                       setSelected(catalog.ids.find(id => id === value) ?? '');
+                     } },
                       h('option', { value: '' }, t('settings.choose')),
                       catalog.ids.map(id => h('option', { key: id, value: id }, catalog.byId[id]?.displayTitle || id)))),
                   sessionId ? h(RetainedSettings, { key: sessionId, sessionId, useSessionAccess: props.useSessionAccess, language }) : null)));
         }
+        /** @param {AfkBundleConfigProps} props */
         function BundleConfig(props) {
           return props.view === 'page' ? h(SettingsPage, props) : null;
         }

@@ -1,3 +1,13 @@
+/// <reference path="./types/host.d.ts" />
+/** @typedef {import('./types/afk.js').AfkState} AfkState */
+/** @typedef {import('./types/afk.js').AfkSettings} AfkSettings */
+/** @typedef {import('./types/afk.js').AfkQuestion} AfkQuestion */
+/** @typedef {import('./types/afk.js').AfkRecord} AfkRecord */
+/** @typedef {import('./types/afk.js').AfkReadReceipt} AfkReadReceipt */
+/** @typedef {import('./types/afk.js').AfkHistory} AfkHistory */
+/** @typedef {import('./types/host.js').LoggedToolResult} LoggedToolResult */
+/** @typedef {import('./types/host.js').LogCoordinates} LogCoordinates */
+/** @typedef {import('./types/host.js').AfkProjection} AfkProjection */
 import { z } from 'zod';
 
 export const KEY = 'dsh-afk';
@@ -39,15 +49,19 @@ const stateSchema = z.object({
 const idsSchema = z.array(z.string().min(1)).min(1).max(50).refine(ids => new Set(ids).size === ids.length);
 const readValueSchema = z.object({ type: z.literal('dsh-afk/read-v1'), readIds: z.array(z.string().min(1)) });
 
+/** @param {AfkState} state @returns {AfkSettings} */
 export function settingsOf(state) {
   const { enabled, mode, reply } = state.view;
   return { enabled, mode, reply };
 }
 
+/** @param {unknown} args @returns {AfkQuestion[] | undefined} */
 export function parseQuestions(args) {
-  if (!args || !Array.isArray(args.questions)) return undefined;
-  const parsed = questionsSchema.safeParse(args.questions.map(question => {
-    if (!question || typeof question !== 'object' || Array.isArray(question)) return question;
+  if (!isObject(args) || !Array.isArray(args.questions)) return undefined;
+  /** @type {unknown[]} */
+  const questions = args.questions;
+  const parsed = questionsSchema.safeParse(questions.map(question => {
+    if (!isObject(question)) return question;
     // Native ask permits arbitrary extension fields but only consumes these fields.
     // In particular, a foreign `multiSelect` or non-string `detail` is not an input constraint.
     return {
@@ -61,19 +75,29 @@ export function parseQuestions(args) {
   return parsed.success ? parsed.data : undefined;
 }
 
+/** @param {unknown} value @returns {value is Record<string, unknown>} */
+function isObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/** @param {string | undefined} text @returns {unknown} */
 function json(text) {
+  if (text === undefined) return undefined;
   try { return JSON.parse(text); } catch { return undefined; }
 }
 
+/** @param {LoggedToolResult['content'] | undefined} content @returns {unknown} */
 function outcome(content) {
   const text = content?.filter(block => block.type === 'text').map(block => block.text).join('\n') ?? '';
   return json(text) ?? text;
 }
 
+/** @param {AfkState} state @param {LogCoordinates} event @param {string} callId @param {unknown} args @returns {AfkState} */
 function recordCall(state, event, callId, args) {
   const questions = parseQuestions(args);
   if (!questions || state.pending.some(call => call.callId === callId)) return state;
   const call = { callId, questions, time: event.time, seq: event.seq };
+  /** @type {AfkRecord} */
   const record = {
     id: `${event.seq}:${callId}`, callId, time: event.time, mode: null, afk: null, requestState: state.requestState,
     questions, reply: '', read: false, status: 'pending',
@@ -84,6 +108,7 @@ function recordCall(state, event, callId, args) {
   };
 }
 
+/** @param {AfkState} state @param {string} callId @param {LoggedToolResult} result @returns {AfkState} */
 function recordResult(state, callId, result) {
   const pending = state.pending.find(call => call.callId === callId);
   if (!pending) return state;
@@ -91,11 +116,12 @@ function recordResult(state, callId, result) {
   const index = state.records.findIndex(record => record.id === `${pending.seq}:${callId}`);
   if (index < 0) return { ...state, pending: rest };
   const answer = outcome(result.content);
-  const answers = answer?.answers;
+  const answers = isObject(answer) && Array.isArray(answer.answers) ? /** @type {unknown[]} */ (answer.answers) : undefined;
   const reply = Array.isArray(answers) && answers.length === pending.questions.length
-    && answers.every((item, answerIndex) => item && item.id === pending.questions[answerIndex].id
+    && answers.every((item, answerIndex) => isObject(item) && item.id === pending.questions[answerIndex].id
       && typeof item.custom === 'string' && item.custom.startsWith(REPLY_PREFIX)
-      && Array.isArray(item.selected) && item.selected.length === 0 && item.custom === answers[0].custom)
+      && Array.isArray(item.selected) && item.selected.length === 0 && isObject(answers[0]) && item.custom === answers[0].custom)
+    && isObject(answers[0]) && typeof answers[0].custom === 'string'
     ? answers[0].custom : '';
   const previous = state.records[index];
   const errorText = typeof answer === 'string' ? answer.replace(/^Error: /, '') : '';
@@ -103,7 +129,7 @@ function recordResult(state, callId, result) {
   // Only the final result proves intervention. Configuration, UNKNOWN_TOOL and other failures do not.
   const automatic = !result.isError && Boolean(reply);
   const status = result.isError ? (blocked ? 'blocked' : 'failed')
-    : automatic ? 'auto-replied' : answer?.pending ? 'pending' : 'answered';
+    : automatic ? 'auto-replied' : isObject(answer) && answer.pending ? 'pending' : 'answered';
   const afk = blocked || automatic ? true : status === 'answered' ? false : null;
   const mode = blocked ? 'disable-ask' : automatic ? 'auto-reply' : null;
   const records = [...state.records];
@@ -114,7 +140,12 @@ function recordResult(state, callId, result) {
   };
 }
 
-/** One pure operation shared by human commands and the model-facing counterpart. */
+/**
+ * One pure operation shared by human commands and the model-facing counterpart.
+ * @param {AfkState} state
+ * @param {unknown} recordIds
+ * @returns {AfkReadReceipt}
+ */
 export function markReadOf(state, recordIds) {
   const parsed = idsSchema.safeParse(recordIds);
   if (!parsed.success) throw new Error('recordIds must contain 1–50 distinct non-empty record IDs');
@@ -128,6 +159,7 @@ export function markReadOf(state, recordIds) {
   };
 }
 
+/** @param {AfkState} state @param {unknown} value @returns {AfkState} */
 function applyReadValue(state, value) {
   const parsed = readValueSchema.safeParse(value);
   if (!parsed.success) return state;
@@ -143,15 +175,19 @@ function applyReadValue(state, value) {
   return { ...state, records, view: { ...state.view, unread: state.view.unread - changed, revision: state.view.revision + 1 } };
 }
 
+/** @param {AfkState} state @param {string} callId @param {LoggedToolResult} result @returns {AfkState} */
 function readToolResult(state, callId, result) {
   if (!state.marks.includes(callId)) return state;
   const next = { ...state, marks: state.marks.filter(id => id !== callId) };
   if (result.isError) return next;
   // Definition-owned metadata survives output spilling while still following the final success/failure.
-  return applyReadValue(next, result.meta?.dshAfkRead ?? outcome(result.content));
+  return applyReadValue(next, (isObject(result.meta) ? result.meta.dshAfkRead : undefined) ?? outcome(result.content));
 }
 
-/** All durable state is reconstructed from existing command and tool events. */
+/**
+ * All durable state is reconstructed from existing command and tool events.
+ * @type {AfkProjection}
+ */
 export const projection = {
   key: KEY, stateSchema, stateVersion: 3,
   init(_header, inheritedEventCount = 0) {
@@ -162,50 +198,54 @@ export const projection = {
   },
   apply(state, event) {
     if (event.seq < state.floor) return state; // A fork never inherits unattended authority or read receipts.
-    const data = event.data;
-    if (event.type === 'user/message' && data.source?.kind === 'runtime-context' && data.source.form === 'snapshot') {
+    const { type, data } = event;
+    const source = type === 'user/message' ? /** @type {unknown} */ (data.source) : undefined;
+    if (isObject(source) && source.kind === 'runtime-context' && source.form === 'snapshot' && Array.isArray(source.sections)) {
       // Trust the framework's named source sections, never a matching prefix in ordinary user text.
-      const section = data.source.sections.find(section => section.name === KEY);
-      const line = section?.text.split('\n', 1)[0] ?? '';
+      /** @type {unknown[]} */
+      const sections = source.sections;
+      const section = sections.find(section => isObject(section) && section.name === KEY);
+      const line = isObject(section) && typeof section.text === 'string' ? section.text.split('\n', 1)[0] : '';
       const parsed = requestStateSchema.safeParse(line.startsWith(REQUEST_STATE_PREFIX) ? json(line.slice(REQUEST_STATE_PREFIX.length)) : undefined);
       const requestState = parsed.success ? parsed.data : null;
       if (JSON.stringify(requestState) === JSON.stringify(state.requestState)) return state;
       return { ...state, requestState };
     }
-    if (event.type === 'command/run' && data.name === 'afk' && data.source?.kind === 'user'
+    if (type === 'command/run' && data.name === 'afk' && data.source?.kind === 'user'
       && /^(set\s|read\s|on\s*$|off\s*$)/.test((data.args ?? '').trim())) {
       return { ...state, commands: [...state.commands, data.commandId] };
     }
-    if (event.type === 'command/done' && state.commands.includes(data.commandId)) {
+    if (type === 'command/done' && state.commands.includes(data.commandId)) {
       const next = { ...state, commands: state.commands.filter(id => id !== data.commandId) };
       if (data.kind !== 'success') return next;
       const value = json(data.text);
-      if (value?.type === 'dsh-afk/read-v1') return applyReadValue(next, value);
-      const parsed = settingsSchema.safeParse(value?.settings);
-      if (value?.type !== 'dsh-afk/settings-v1' || !parsed.success) return next;
+      if (isObject(value) && value.type === 'dsh-afk/read-v1') return applyReadValue(next, value);
+      const parsed = settingsSchema.safeParse(isObject(value) ? value.settings : undefined);
+      if (!isObject(value) || value.type !== 'dsh-afk/settings-v1' || !parsed.success) return next;
       return { ...next, view: { ...state.view, ...parsed.data, revision: state.view.revision + 1 } };
     }
-    if (event.type === 'user/message' && data.source?.kind === 'user-question-reply' && data.source.outcome === 'answered') {
-      const index = state.records.findLastIndex(record => record.callId === data.source.callId);
+    if (type === 'user/message' && data.source?.kind === 'user-question-reply' && data.source.outcome === 'answered') {
+      const callId = data.source.callId;
+      const index = state.records.findLastIndex(record => record.callId === callId);
       if (index < 0) return state;
       const records = [...state.records];
       records[index] = { ...records[index], status: 'answered', afk: false, mode: null, reply: '', answer: outcome(data.content) };
       return { ...state, records, view: { ...state.view, revision: state.view.revision + 1 } };
     }
-    if (event.type === 'tool/call') {
+    if (type === 'tool/call') {
       if (data.name === ASK) return recordCall(state, event, data.callId, json(data.arguments));
       if (data.name === MARK_READ) return { ...state, marks: [...state.marks, data.callId] };
     }
-    if (event.type === 'tool/ptc-dispatch-start') {
+    if (type === 'tool/ptc-dispatch-start') {
       if (data.name === ASK) return recordCall(state, event, data.subCallId, data.arguments);
       if (data.name === MARK_READ) return { ...state, marks: [...state.marks, data.subCallId] };
     }
-    if (event.type === 'tool/result') {
+    if (type === 'tool/result') {
       const result = { ...data.message, meta: data.meta };
       if (state.marks.includes(data.message.toolCallId)) return readToolResult(state, data.message.toolCallId, result);
       return recordResult(state, data.message.toolCallId, result);
     }
-    if (event.type === 'tool/ptc-dispatch') {
+    if (type === 'tool/ptc-dispatch') {
       if (data.name === MARK_READ) return readToolResult(state, data.subCallId, data);
       if (data.name === ASK) return recordResult(state, data.subCallId, data);
     }
@@ -214,6 +254,13 @@ export const projection = {
   wire: { viewSchema, view: state => state.view },
 };
 
+/**
+ * @param {AfkState} state
+ * @param {number} [offset]
+ * @param {number} [limit]
+ * @param {'unread' | 'all'} [filter]
+ * @returns {AfkHistory}
+ */
 export function historyOf(state, offset = 0, limit = 20, filter = 'unread') {
   if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 50) {
     throw new Error('offset must be a non-negative integer; limit must be between 1 and 50');
