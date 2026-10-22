@@ -87,7 +87,8 @@ dsh plugin --profile web add "link:$PWD"
 链接会跨进程重启保留，但不等于任意源码变化都会自动刷新后台。开发目录必须保持存在，改动后的加载结果仍需在当前 Host 与刷新后的真实页面核对。tarball 仅作为可选分发/隔离测试制品，本地开发推荐使用目录链接。
 
 - 已核对兼容版本：**DSH 0.2.1-rc.2**；其他版本未验证，清单采用精确版本门槛。
-- 运行时依赖：Zod `4.6.7`（事件/命令验证）与 `@deepseek-ai/schemastery` `3.18.5`（标准 volatile Config），由插件明确声明；Client 复用宿主 configForms 服务，不导入跨插件运行时代码。
+- 运行时公共库使用必需的 `peerDependencies`：Zod `4.6.7`（事件/命令验证）与 `@deepseek-ai/schemastery` `3.18.5`（标准 volatile Config），由 DSH 宿主提供并共享，不作为本插件的普通 `dependencies` 安装第二份。当前适配版本采用已验证的精确 peer 约束；升级宿主时需一并核验。peer 是兼容要求，是否拒绝缺失或不匹配仍取决于安装器/宿主校验，不能把声明本身当作运行时保护。
+- 本地开发与 CI 在 `devDependencies` 中精确固定同版公共库及所需 SDK 声明。`autoInstallPeers: false` 保留，防止缺少 peer 时包管理器自行选择版本；这两项 peer 不标 optional，因为缺失时插件不能运行。Client 的 React 与其他服务由宿主模块表/注入提供，不新增运行时包副本。
 - 安装后既要检查 application，也要以 Config schema 和真实调用确认后台换代；Web 页面刷新载入新 Client。若安装元数据已更新而 Host 仍驻留旧模块，需要先取得明确的人类重启确认，不能把 AFK 自动回复当同意，也不能只凭 applied 宣称功能生效。
 - 新 Client 在作用范围配置不可用时默认禁用修改；只有只读 `/afk` 返回完整旧版状态且没有 scope 字段，才兼容保留旧后台会话开关。证明绑定 Settings snapshot 与连接代次，写入前还会重查；新 Host 的 scope 返回或连接重置会撤销旧证明。全局配置仍需真正加载新后台后才能使用。
 - 图标为本包原创 SVG，按 MIT 分发。中英文插件管理器标题与说明包含在 `locale` 导出中。
@@ -97,7 +98,11 @@ dsh plugin --profile web add "link:$PWD"
 ```bash
 pnpm install --frozen-lockfile --ignore-scripts
 pnpm run check
+pnpm run typecheck
 pnpm test
+
+# 用锁文件中固定版本的真实 DSH SDK 运行全部集成测试（不启动 DSH 或访问用户 profile）。
+DSH_TEST_RUNTIME_DIR="$PWD" pnpm test
 
 # 可选：使用明确指定的现有 DSH 安装，运行隔离的真实 Cordis/Session/Tool/Commands 集成测试。
 # 不启动服务器，不调用模型，不读取/修改真实 profile 的会话或设置。
@@ -109,3 +114,13 @@ DSH_TEST_PLUGIN_DIR=/absolute/path/to/unpacked/package pnpm test
 ```
 
 未提供 `DSH_TEST_RUNTIME_DIR` 时，真实运行时集成测试明确标记 skipped，不将单元测试冒充运行时验证。
+
+### JSDoc 与类型检查
+
+源码保持 JavaScript，无编译产物。`tsconfig.json` 对 Host、Client 和测试开启 `allowJs`、`checkJs`、`strict`、`noImplicitAny` 与 `noEmit`。共享业务模型放在 `types/afk.d.ts`，Host/Client 的宿主边界与模块加载契约由相应声明文件描述；组件 props 与函数参数用靠近实现的 JSDoc 标注。框架类型优先引用固定版本 DSH 的官方声明，不为类型添加跨插件运行时导入。
+
+TypeScript、Node/React 声明及 DSH SDK 只作为开发依赖；两项公共运行时库由必需 peer 声明，开发版本精确固定，插件没有普通生产依赖。由于已发布 SDK 的声明图本身不完整，`skipLibCheck` 仅避免逐行诊断声明文件内部；项目的 JavaScript 仍按严格模式完整检查。投影 SDK 的 Zod 声明通过定向 override 与本项目4.6.7对齐，避免相同 Zod 4 API 的 minor 类型身份冲突。
+
+### GitHub Actions CI
+
+每次 push、pull request 和手动触发都会在 Node.js 22 / 24 上运行冻结锁安装（禁用依赖脚本）、语法、JSDoc 类型检查、真实 SDK 集成测试和打包后集成测试。CI 使用锁定的开发 SDK 作为运行时锚点，不依赖机器上的全局 DSH，也不需要登录态、模型密钥或用户 profile；额外复制不含开发依赖及 node_modules 的生产插件，用真实宿主解析器验证普通安装与外部目录 link 都共享宿主 peer。只要出现 skipped 检查就失败。第三方 Actions 固定到完整 commit SHA，工作流仅授予 `contents: read`，不会发布 npm 包或部署插件。

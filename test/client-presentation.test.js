@@ -10,7 +10,9 @@ const source = await readFile(process.env.DSH_TEST_PLUGIN_DIR
   ? join(process.env.DSH_TEST_PLUGIN_DIR, 'client.js') : new URL('../client.js', import.meta.url), 'utf8');
 const definition = source.match(/^    function commandSummary\(node, t\) \{[\s\S]*?^    \}/m)?.[0];
 assert.ok(definition, 'The production command formatter must remain testable');
-const summarize = vm.runInNewContext(`(${definition})`);
+// The VM evaluates only this pure formatter; assert the smallest consumed signature.
+const summarize = /** @type {import('../types/test.js').Formatter} */ (/** @type {unknown} */ (vm.runInNewContext(`(${definition})`)));
+/** @type {Record<string, string>} */
 const messages = {
   'command.running': '正在处理…', 'command.done': '操作已完成', 'command.failed': '操作失败',
   'command.read': '已标记为已读', 'command.history': '记录：未读 {unread} 批 / 共 {total} 批',
@@ -18,7 +20,9 @@ const messages = {
   'scope.session': '按会话单独', 'scope.global': '全局统一',
   'mode.auto': '自动应答', 'mode.disable': '禁用 ask_user_question',
 };
+/** @type {import('../types/test.js').FormatterTranslate} */
 const t = (key, values = {}) => Object.entries(values).reduce((text, [name, value]) => text.replaceAll(`{${name}}`, String(value)), messages[key]);
+/** @param {unknown} data */
 const result = data => ({ name: 'afk', outcome: { kind: 'success', text: JSON.stringify(data) } });
 
 test('history commands show counts without raw JSON, questions or identifiers', () => {
