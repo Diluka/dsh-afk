@@ -10,13 +10,6 @@ overrides:
 importers:
 
   .:
-    dependencies:
-      '@deepseek-ai/schemastery':
-        specifier: 3.18.5
-        version: 3.18.5
-      zod:
-        specifier: 4.6.7
-        version: 4.6.7
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: 4.0.5
@@ -147,6 +140,9 @@ importers:
       '@deepseek-ai/dsh-working-directory':
         specifier: 0.2.1-rc.2
         version: 0.2.1-rc.2(7c2b347e146d5b2c192a1c0c8da7c203)
+      '@deepseek-ai/schemastery':
+        specifier: 3.18.5
+        version: 3.18.5
       '@types/node':
         specifier: 24.19.2
         version: 24.19.2
@@ -156,6 +152,9 @@ importers:
       typescript:
         specifier: 7.0.2
         version: 7.0.2
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
 
 packages:
 
