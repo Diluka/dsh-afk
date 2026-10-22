@@ -56,7 +56,11 @@ jobs:
           mkdir -p artifacts/unpacked
           pnpm pack --out artifacts/dsh-afk-ci.tgz
           tar -xzf artifacts/dsh-afk-ci.tgz -C artifacts/unpacked
-          node --input-type=module -e "import { readFile, access } from 'node:fs/promises'; const p=JSON.parse(await readFile('artifacts/unpacked/package/package.json','utf8')); for(const f of ['index.js','state.js','config.js','client.js','icon.svg','locale/en.json','locale/zh.json','types/afk.d.ts','types/host.d.ts','types/client.d.ts']) await access('artifacts/unpacked/package/'+f); if(p.engines.dsh!=='0.2.1-rc.2') throw new Error('Unexpected compatibility target');"
+          node --input-type=module -e "import { readFile, access } from 'node:fs/promises'; const p=JSON.parse(await readFile('artifacts/unpacked/package/package.json','utf8')); for(const f of ['index.js','state.js','config.js','history.js','client.js','icon.svg','locale/en.json','locale/zh.json','types/afk.d.ts','types/host.d.ts','types/client.d.ts','types/history.d.ts']) await access('artifacts/unpacked/package/'+f); if(p.engines.dsh!=='0.2.1-rc.2') throw new Error('Unexpected compatibility target');"
+      - name: Typecheck standalone packed JavaScript and declarations
+        run: |
+          node --input-type=module -e "import { writeFile } from 'node:fs/promises'; await writeFile('artifacts/tsconfig.package.json',JSON.stringify({extends:'../tsconfig.json',include:['unpacked/package/*.js','unpacked/package/types/**/*.d.ts'],exclude:[]}));"
+          pnpm exec tsc -p artifacts/tsconfig.package.json --pretty false
       - name: Test the packed plugin against the same real DSH SDKs
         env:
           DSH_TEST_RUNTIME_DIR: ${{ github.workspace }}

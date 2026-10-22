@@ -16,7 +16,7 @@ test('settings stay in bundle details while current-session history sits beside 
   const toolbar = source.slice(source.indexOf('function Toolbar('), source.indexOf('function AfkSlot('));
   assert.match(toolbar, /h\(Switch,/);
   assert.match(toolbar, /dsh-afk-history-trigger/);
-  assert.match(toolbar, /h\(HistoryDialog, \{ sessionId, view, allowed, language/);
+  assert.match(toolbar, /h\(HistoryDialog, \{ sessionId, view, allowed, historyAllowed, language/);
   assert.doesNotMatch(toolbar, /SessionSettings/);
   const settings = source.slice(source.indexOf('function SessionSettings('), source.indexOf('function BoundSettings('));
   assert.doesNotMatch(settings, /QuestionHistory|HistoryRecord|\/afk history|history\.title/);
@@ -40,6 +40,16 @@ test('question history defaults to unread, marks explicit IDs read, and retains 
   assert.match(history, /\/afk read \$\{JSON\.stringify\(\[id\]\)\}/);
   assert.match(history, /onMarkRead: markRead/);
   assert.match(source, /view\?\.unread \?\? 0/);
+});
+test('history browsing uses a read-only Remote, never commands or scroll compensation', () => {
+  const history = source.slice(source.indexOf('function QuestionHistory('), source.indexOf('function HistoryDialog('));
+  assert.match(history, /queryHistory\(sessionId, \{ offset, limit: PAGE_SIZE, filter \}, controller\.signal\)/);
+  assert.doesNotMatch(history, /\/afk history|commands\.execute/);
+  assert.match(source, /ctx\.remote\.\$mount\(\{ package: 'dsh-afk', descriptors: \[historyDescriptor\] \}\)/);
+  assert.match(source, /ctx\.inject\(\['remote', 'remote\.afkHistory'\]/);
+  assert.match(source, /props\.useAccess\('afkHistory\/history'\)/);
+  assert.match(history, /canMark: allowed/);
+  assert.doesNotMatch(source, /MutationObserver|scrollTop|scrollBy\(|scrollTo\(/);
 });
 test('global preferences use the shared Settings form and global access, never a session permission shortcut', () => {
   assert.match(source, /ctx\.configForms\.get\(KEY\)/);
@@ -68,6 +78,8 @@ test('rolling-upgrade fallback requires a typed legacy status proof bound to the
 test('only AFK command rows get a custom presenter, and read actions rely on the projection update once', () => {
   assert.match(source, /name: 'conversation\.chat\.commandview', key: 'afk'/);
   assert.doesNotMatch(source, /name: 'conversation\.chat\.node'/);
+  assert.match(source, /if \(summary\.hidden\) return null/);
+  assert.match(source, /\[node\.name, node\.args, node\.outcome, language\]/);
   const mark = source.slice(source.indexOf('async function markRead('), source.indexOf('const data = history.data'));
   assert.doesNotMatch(mark, /setRefresh\(|setOffset\(/);
 });

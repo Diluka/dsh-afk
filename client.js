@@ -190,26 +190,77 @@ window.__ModuleLoader__.load({
 
     /**
      * Narrow the command's untrusted JSON before it reaches React props.
-     * @param {unknown} value @param {number} offset @param {AfkHistory['filter']} filter
+     * @param {unknown} value @param {number} offset @param {AfkHistory['filter']} filter @param {number} [limit]
      * @returns {value is HistoryPage}
      */
-    function isHistory(value, offset, filter) {
+    function isHistory(value, offset, filter, limit = PAGE_SIZE) {
       return isObject(value) && typeof value.total === 'number' && Number.isSafeInteger(value.total) && value.total >= 0
-        && value.offset === offset && value.limit === PAGE_SIZE && value.filter === filter
+        && value.offset === offset && value.limit === limit && value.filter === filter
         && typeof value.totalAll === 'number' && Number.isSafeInteger(value.totalAll) && value.totalAll >= 0
         && typeof value.unread === 'number' && Number.isSafeInteger(value.unread) && value.unread >= 0
         && Array.isArray(value.records) && value.records.every(isHistoryRecord);
     }
 
+    /** @param {unknown} value @returns {string} */
+    function parseHistorySessionId(value) {
+      if (typeof value !== 'string' || value.length === 0) throw new Error('Invalid AFK history session ID');
+      return value;
+    }
+    /** @param {unknown} value @returns {import('./types/history.js').HistoryQuery} */
+    function parseHistoryQuery(value) {
+      if (!isObject(value) || Object.keys(value).length !== 3 || Object.keys(value).some(key => !['offset', 'limit', 'filter'].includes(key))
+        || !Number.isSafeInteger(value.offset) || typeof value.offset !== 'number' || value.offset < 0
+        || !Number.isSafeInteger(value.limit) || typeof value.limit !== 'number' || value.limit < 1 || value.limit > 50
+        || (value.filter !== 'unread' && value.filter !== 'all')) throw new Error('Invalid AFK history query');
+      return { offset: value.offset, limit: value.limit, filter: value.filter };
+    }
+    /** @param {unknown} value @returns {value is import('./types/afk.js').AfkRecord} */
+    function isCompleteHistoryRecord(value) {
+      if (!isObject(value)) return false;
+      const { mode, afk, requestState: request } = value;
+      if (!isHistoryRecord(value) || value.questions.length === 0
+        || new Set(value.questions.map(question => question.id)).size !== value.questions.length) return false;
+      return (mode === null || mode === 'auto-reply' || mode === 'disable-ask')
+        && (afk === null || typeof afk === 'boolean')
+        && (request === null || (isObject(request) && Object.keys(request).length === 3
+          && Object.keys(request).every(key => ['scope', 'enabled', 'mode'].includes(key))
+          && (request.scope === 'session' || request.scope === 'global') && typeof request.enabled === 'boolean'
+          && (request.mode === 'auto-reply' || request.mode === 'disable-ask')));
+    }
+    /** @param {unknown} value @returns {AfkHistory} */
+    function parseHistoryPage(value) {
+      const query = parseHistoryQuery(isObject(value) ? { offset: value.offset, limit: value.limit, filter: value.filter } : undefined);
+      if (!isHistory(value, query.offset, query.filter, query.limit) || Object.keys(value).length !== 7
+        || Object.keys(value).some(key => !['total', 'totalAll', 'unread', 'offset', 'limit', 'filter', 'records'].includes(key))
+        || !value.records.every(isCompleteHistoryRecord)) throw new Error('Invalid AFK history page');
+      return { ...value, records: value.records };
+    }
+    // This Client face mirrors the Host wire contract, without importing Host modules or a browser Zod copy.
+    /** @type {import('@deepseek-ai/dsh-typert-protocol').InvocationDescriptor} */
+    const historyDescriptor = {
+      id: 'dsh-afk#history', service: 'afkHistory', namespace: 'afkHistory', method: 'history',
+      invocation: { kind: 'direct' }, cancellation: { parameter: 'signal' },
+      parameters: [
+        { name: 'afkAddress', wire: 'sessionId', source: 'lookup', lookup: 'afkHistoryAddress',
+          codec: { mode: 'strict', typeSymbol: '@deepseek-ai/dsh-session/types#SessionId', create: () => ({ parse: parseHistorySessionId }) } },
+        { name: 'query', wire: 'query', source: 'json',
+          codec: { mode: 'strict', typeSymbol: 'dsh-afk#HistoryQuery', create: () => ({ parse: parseHistoryQuery }) } },
+      ],
+      result: { mode: 'strict', typeSymbol: 'dsh-afk#AfkHistory', create: () => ({ parse: parseHistoryPage }), decode: parseHistoryPage },
+    };
+
     // Presentation only: preserve the command JSON for the UI and durable receipts.
     /** @param {CommandNode} node @param {Translate} t @returns {CommandSummary} */
     function commandSummary(node, t) {
-      if (!node.outcome) return { state: 'running', text: t('command.running') };
+      // A history request is a read-only view action, not a chat notification.
+      const historyQuery = node.name === 'afk' && typeof node.args === 'string' && /^history(?:\s|$)/.test(node.args.trim());
+      if (!node.outcome) return { state: 'running', text: t('command.running'), hidden: historyQuery };
       const raw = typeof node.outcome.text === 'string' ? node.outcome.text.trim() : '';
       if (node.outcome.kind === 'error') {
         const reason = /^[{[]/.test(raw) ? '' : raw.replace(/\s+/g, ' ').slice(0, 240);
         return { state: 'error', text: t('command.failed') + (reason ? `：${reason}` : '') };
       }
+      if (historyQuery) return { state: 'success', text: '', hidden: true };
       /** @type {unknown} */
       let decoded;
       try { decoded = JSON.parse(raw); } catch {}
@@ -221,10 +272,10 @@ window.__ModuleLoader__.load({
           return { state: 'success', text: t('command.read') };
         }
         if (count(data.totalAll) && count(data.unread)) {
-          return { state: 'success', text: t('command.history', { total: data.totalAll, unread: data.unread }) };
+          return { state: 'success', text: t('command.history', { total: data.totalAll, unread: data.unread }), hidden: true };
         }
         if (count(data.total) && Array.isArray(data.records)) {
-          return { state: 'success', text: t('command.history.total', { total: data.total }) };
+          return { state: 'success', text: t('command.history.total', { total: data.total }), hidden: true };
         }
         const settings = data.type === 'dsh-afk/settings-v1' ? data.settings : data;
         if (settings && typeof settings === 'object' && 'enabled' in settings && typeof settings.enabled === 'boolean'
@@ -253,9 +304,9 @@ window.__ModuleLoader__.load({
 
     /**
      * @param {{ record: HistoryRecordView, t: Translate, language: string,
-     *   onMarkRead: (id: string) => void, marking: string }} props
+     *   onMarkRead: (id: string) => void, marking: string, canMark: boolean }} props
      */
-    function HistoryRecord({ record, t, language, onMarkRead, marking }) {
+    function HistoryRecord({ record, t, language, onMarkRead, marking, canMark }) {
       const date = new Date(record.time);
       const validDate = Number.isFinite(date.getTime());
       return h('li', { className: 'dsh-afk-record', 'data-read': record.read === true },
@@ -275,13 +326,20 @@ window.__ModuleLoader__.load({
         h('p', { className: 'dsh-afk-muted' }, `${t('history.call')}: ${record.callId}`),
         h('div', { className: 'dsh-afk-row' }, record.read
           ? h('span', { className: 'dsh-afk-read-state' }, t('history.read'))
-          : h('button', { type: 'button', className: 'dsh-afk-button dsh-afk-mark-read', disabled: Boolean(marking), onClick: () => onMarkRead(record.id) },
+          : h('button', { type: 'button', className: 'dsh-afk-button dsh-afk-mark-read', disabled: !canMark || Boolean(marking), onClick: () => onMarkRead(record.id) },
             t(marking === record.id ? 'history.marking' : 'history.markRead'))));
     }
 
     return {
       inject: ['slots', 'locale', 'remote', 'remote.commands', 'sessions', 'configForms'],
-      apply(ctx) {
+      async apply(ctx) {
+        await ctx.remote.$mount({ package: 'dsh-afk', descriptors: [historyDescriptor] });
+        /** @type {import('./types/history.js').HistoryRemote | undefined} */
+        let historyRemote;
+        await ctx.inject(['remote', 'remote.afkHistory'], scoped => {
+          historyRemote = scoped.remote.afkHistory;
+          scoped.effect(() => () => { historyRemote = undefined; });
+        });
         ctx.effect(() => ctx.locale.register(KEY, 'en', dictionaries.en));
         ctx.effect(() => ctx.locale.register(KEY, 'zh', dictionaries.zh));
         const t = ctx.locale.bind(KEY);
@@ -341,9 +399,19 @@ window.__ModuleLoader__.load({
           return res.value.result;
         }
 
+        /** @param {SessionId} sessionId @param {import('./types/history.js').HistoryQuery} query @param {AbortSignal} signal */
+        async function queryHistory(sessionId, query, signal) {
+          if (!historyRemote) throw new Error(t('unavailable'));
+          parseHistorySessionId(sessionId);
+          const result = await historyRemote.history(sessionId, parseHistoryQuery(query), signal);
+          if (!result.ok) throw new Error(result.error.message);
+          return result.value;
+        }
+
         const AfkCommandView = React.memo(/** @param {AfkCommandViewProps} props */ function AfkCommandView({ node }) {
           const language = useLanguage();
-          const summary = React.useMemo(() => commandSummary(node, t), [node.outcome, language]);
+          const summary = React.useMemo(() => commandSummary(node, t), [node.name, node.args, node.outcome, language]);
+          if (summary.hidden) return null;
           return h('div', { className: 'dsh-afk-command', 'data-state': summary.state,
             style: { padding: '4px 0', fontSize: 12, lineHeight: '20px', overflowWrap: 'anywhere',
               color: summary.state === 'error' ? 'var(--dsw-alias-state-error-primary)' : 'var(--dsw-alias-label-secondary)' } },
@@ -353,9 +421,9 @@ window.__ModuleLoader__.load({
         // Session controls: AFK switch and current-session history, never plugin settings.
         /**
          * @param {{ sessionId: SessionId, view: AfkView | undefined, allowed: boolean,
-         *   globalAllowed: boolean, language: string }} props
+         *   historyAllowed: boolean, globalAllowed: boolean, language: string }} props
          */
-        function Toolbar({ sessionId, view, allowed, globalAllowed, language }) {
+        function Toolbar({ sessionId, view, allowed, historyAllowed, globalAllowed, language }) {
           const preferences = usePreferences();
           const ready = preferencesReady(preferences);
           const global = ready && preferences.value.scope === 'global';
@@ -414,11 +482,11 @@ window.__ModuleLoader__.load({
             h(Switch, { checked: (ready || legacy) && effective?.enabled === true, disabled: (!global && !view) || !writable || saving,
               label: t(global ? 'switch.global' : 'switch.label'), text: t(global ? 'afk.global' : 'afk'), onChange: toggle,
               title: error || (legacy ? t('scope.legacy') : !ready ? t(preferences.status === 'loading' ? 'scope.loading' : 'scope.error') : !writable ? t('forbidden') : (!global && !view) ? t('unavailable') : t(global ? 'switch.global' : 'switch.label')) }),
-            h('button', { type: 'button', className: 'dsh-afk-history-trigger', disabled: !view || !allowed,
+            h('button', { type: 'button', className: 'dsh-afk-history-trigger', disabled: !view || !historyAllowed,
               'aria-label': t('history.title'), 'aria-haspopup': 'dialog', 'aria-expanded': historyOpen,
               title: t('history.title'), onClick: () => setHistoryOpen(previous => !previous) },
               t('history.open'), h('span', { 'aria-hidden': true }, view?.unread ?? 0)),
-            historyOpen ? h(HistoryDialog, { sessionId, view, allowed, language, onClose: () => setHistoryOpen(false) }) : null,
+            historyOpen ? h(HistoryDialog, { sessionId, view, allowed, historyAllowed, language, onClose: () => setHistoryOpen(false) }) : null,
             error ? h('span', { className: 'dsh-afk-error', role: 'alert' }, error) : null);
         }
         /** @param {AfkToolbarSlotProps} props */
@@ -427,14 +495,15 @@ window.__ModuleLoader__.load({
           const view = props.useProjection(KEY);
           const allowed = props.useAccess('commands/execute');
           const globalAllowed = props.useRemoteAccess('settings/mutate');
-          return h(Toolbar, { key: props.sessionId, sessionId: props.sessionId, view, allowed, globalAllowed, language });
+          const historyAllowed = props.useAccess('afkHistory/history');
+          return h(Toolbar, { key: props.sessionId, sessionId: props.sessionId, view, allowed, historyAllowed, globalAllowed, language });
         }
 
         /**
          * @param {{ sessionId: SessionId, total: number, unread: number, revision: number | undefined,
-         *   allowed: boolean, language: string }} props
+         *   allowed: boolean, historyAllowed: boolean, language: string }} props
          */
-        function QuestionHistory({ sessionId, total, unread, revision, allowed, language }) {
+        function QuestionHistory({ sessionId, total, unread, revision, allowed, historyAllowed, language }) {
           const [filter, setFilter] = /** @type {[AfkHistory['filter'], React.Dispatch<React.SetStateAction<AfkHistory['filter']>>]} */ (React.useState('unread'));
           const [offset, setOffset] = React.useState(0);
           const [refresh, setRefresh] = React.useState(0);
@@ -444,14 +513,12 @@ window.__ModuleLoader__.load({
           const markRequest = React.useRef(/** @type {AbortController | null} */ (null));
           React.useEffect(() => () => markRequest.current?.abort(), []);
           React.useEffect(() => {
-            if (!allowed) { setHistory({ loading: false, data: null, error: t('forbidden') }); return; }
+            if (!historyAllowed) { setHistory({ loading: false, data: null, error: t('forbidden') }); return; }
             const controller = new AbortController();
             let active = true;
             setHistory({ loading: true, data: null, error: '' });
-            execute(sessionId, `/afk history ${offset} ${PAGE_SIZE} ${filter}`, controller.signal)
-              .then(result => {
-                /** @type {unknown} */
-                const data = typeof result.text === 'string' ? JSON.parse(result.text) : undefined;
+            queryHistory(sessionId, { offset, limit: PAGE_SIZE, filter }, controller.signal)
+              .then(data => {
                 if (!isHistory(data, offset, filter)) {
                   throw new Error(t('error.history'));
                 }
@@ -464,7 +531,7 @@ window.__ModuleLoader__.load({
               })
               .catch(failure => { if (active) setHistory({ loading: false, data: null, error: failureText(failure, t) }); });
             return () => { active = false; controller.abort(); };
-          }, [sessionId, allowed, revision, offset, refresh, filter]);
+          }, [sessionId, historyAllowed, revision, offset, refresh, filter]);
           /** @param {string} id */
           async function markRead(id) {
             if (!allowed || markRequest.current) return;
@@ -481,7 +548,7 @@ window.__ModuleLoader__.load({
           const busy = history.loading || Boolean(marking);
           return h('section', { 'aria-busy': busy },
             h('div', { className: 'dsh-afk-row' }, h('h3', null, t('history.count', { total: data?.total ?? (filter === 'unread' ? unread : total) })),
-              h('button', { type: 'button', className: 'dsh-afk-button', disabled: !allowed || busy, onClick: () => setRefresh(value => value + 1) }, t('history.refresh'))),
+              h('button', { type: 'button', className: 'dsh-afk-button', disabled: !historyAllowed || busy, onClick: () => setRefresh(value => value + 1) }, t('history.refresh'))),
             h('div', { className: 'dsh-afk-filters', role: 'tablist', 'aria-label': t('history.title') },
               (/** @type {const} */ (['unread', 'all'])).map(value => h('button', { key: value, type: 'button', role: 'tab', className: 'dsh-afk-button',
                 'aria-selected': filter === value, disabled: Boolean(marking),
@@ -491,7 +558,7 @@ window.__ModuleLoader__.load({
             history.error || readError ? h('p', { className: 'dsh-afk-error', role: 'alert' }, history.error || readError) : null,
             data?.records.length === 0 ? h('p', { className: 'dsh-afk-muted' }, t(filter === 'unread' ? 'history.emptyUnread' : 'history.empty')) : null,
             data && data.records.length > 0 ? h('ol', { className: 'dsh-afk-history-list' }, data.records.map(record => h(HistoryRecord, {
-              key: record.id, record, t, language, onMarkRead: markRead, marking,
+              key: record.id, record, t, language, onMarkRead: markRead, marking, canMark: allowed,
             }))) : null,
             data && data.total > 0 ? h('nav', { className: 'dsh-afk-row', 'aria-label': t('history.title') },
               h('span', { className: 'dsh-afk-muted' }, t('history.page', { start: offset + 1, end: offset + data.records.length, total: data.total })),
@@ -501,9 +568,9 @@ window.__ModuleLoader__.load({
         }
         /**
          * @param {{ sessionId: SessionId, view: AfkView | undefined, allowed: boolean,
-         *   language: string, onClose: () => void }} props
+         *   historyAllowed: boolean, language: string, onClose: () => void }} props
          */
-        function HistoryDialog({ sessionId, view, allowed, language, onClose }) {
+        function HistoryDialog({ sessionId, view, allowed, historyAllowed, language, onClose }) {
           const ref = React.useRef(/** @type {HTMLDivElement | null} */ (null));
           const close = React.useRef(/** @type {HTMLButtonElement | null} */ (null));
           const id = React.useId();
@@ -530,7 +597,7 @@ window.__ModuleLoader__.load({
             'aria-modal': false, 'aria-labelledby': id },
             h('div', { className: 'dsh-afk-row dsh-afk-dialog-header' }, h('h3', { id }, t('history.title')),
               h('button', { ref: close, type: 'button', className: 'dsh-afk-button', onClick: onClose }, t('history.close'))),
-            h(QuestionHistory, { key: sessionId, sessionId, total: view?.total ?? 0, unread: view?.unread ?? 0, revision: view?.revision, allowed, language }));
+            h(QuestionHistory, { key: sessionId, sessionId, total: view?.total ?? 0, unread: view?.unread ?? 0, revision: view?.revision, allowed, historyAllowed, language }));
         }
 
         /**

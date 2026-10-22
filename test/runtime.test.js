@@ -16,10 +16,10 @@ const load = async name => {
 };
 
 test('isolated installed DSH: real command/projection/tool/scope pipeline, custom replies, policy and disposal', { skip: !runtime }, async () => {
-  const [{ Context }, { default: SystemPrompt }, { default: Tools }, { default: Sessions, Session }, { default: Agents }, { default: Commands }, { default: Projections }, { default: UserQuestions }, ask, { createScope, bindScopeParent }] = await Promise.all([
+  const [{ Context }, { default: SystemPrompt }, { default: Tools }, { default: Sessions, Session }, { default: Agents }, { default: Commands }, { default: Projections }, { default: UserQuestions }, ask, { createScope, bindScopeParent }, { default: Typert }] = await Promise.all([
     load('@deepseek-ai/cordis'), load('@deepseek-ai/dsh-system-prompt'), load('@deepseek-ai/dsh-tools'),
     load('@deepseek-ai/dsh-session'), load('@deepseek-ai/dsh-agent'), load('@deepseek-ai/dsh-commands'),
-    load('@deepseek-ai/dsh-session-projection'), load('@deepseek-ai/dsh-user-questions'), load('@deepseek-ai/dsh-tool-ask-user'), load('@deepseek-ai/dsh-scope'),
+    load('@deepseek-ai/dsh-session-projection'), load('@deepseek-ai/dsh-user-questions'), load('@deepseek-ai/dsh-tool-ask-user'), load('@deepseek-ai/dsh-scope'), load('@deepseek-ai/dsh-typert-registry'),
   ]);
   const ctx = new Context();
   // A single-program check also loads Client declarations; this fixture installs the real Host SessionStore.
@@ -31,7 +31,7 @@ test('isolated installed DSH: real command/projection/tool/scope pipeline, custo
   /** @type {import('../types/test.js').Dispose[]} */
   const registers = [];
   try {
-    for (const service of [SystemPrompt, Tools, Sessions, Agents, Commands, Projections, UserQuestions]) fibers.push(await ctx.plugin(service));
+    for (const service of [Typert, SystemPrompt, Tools, Sessions, Agents, Commands, Projections, UserQuestions]) fibers.push(await ctx.plugin(service));
     let humanRequests = 0;
     ctx.on('user-questions/request', async request => {
       humanRequests++;
@@ -102,10 +102,10 @@ test('isolated installed DSH: real command/projection/tool/scope pipeline, custo
     const state = stateOf();
     assert.equal(state.records[0].status, 'answered');
     assert.equal(state.records[0].afk, false);
-    assert.equal(state.records[0].read, false);
+    assert.equal(state.records[0].read, true);
     assert.equal(state.records[1].status, 'auto-replied');
     assert.equal(state.records[1].reply, REPLY_PREFIX + reply);
-    assert.equal(state.view.unread, 2);
+    assert.equal(state.view.unread, 1);
     const read = await execute('afk_history', {});
     assert.equal(read.isError, false);
     assert.equal(read.value.records[0].reply, REPLY_PREFIX + reply);
@@ -113,7 +113,7 @@ test('isolated installed DSH: real command/projection/tool/scope pipeline, custo
     const cancelledBefore = new AbortController();
     cancelledBefore.abort();
     assert.equal((await execute('afk_mark_read', { recordIds: [read.value.records[0].id] }, cancelledBefore.signal)).isError, true);
-    assert.equal(stateOf().view.unread, 2);
+    assert.equal(stateOf().view.unread, 1);
     const cancelledAfter = new AbortController();
     const stopCancel = ctx.on('tools/post-execute', async (exec, _result, next) => {
       if (exec.name === 'afk_mark_read' && exec.signal === cancelledAfter.signal) cancelledAfter.abort();
@@ -121,12 +121,12 @@ test('isolated installed DSH: real command/projection/tool/scope pipeline, custo
     });
     assert.equal((await execute('afk_mark_read', { recordIds: [read.value.records[0].id] }, cancelledAfter.signal)).isError, true);
     stopCancel();
-    assert.equal(stateOf().view.unread, 2, 'a cancelled success cannot persist its proposed read receipt');
+    assert.equal(stateOf().view.unread, 1, 'a cancelled success cannot persist its proposed read receipt');
     const stopReadBlock = ctx.on('tools/post-execute', async (exec, _result, next) => exec.name === 'afk_mark_read'
       ? { kind: 'block', feedback: [{ type: 'text', text: 'fixture policy refuses read acknowledgement' }] } : next());
     assert.equal((await execute('afk_mark_read', { recordIds: [read.value.records[0].id] })).isError, true);
     stopReadBlock();
-    assert.equal(stateOf().view.unread, 2, 'a post-policy failure does not persist definition-owned success metadata');
+    assert.equal(stateOf().view.unread, 1, 'a post-policy failure does not persist definition-owned success metadata');
     const marked = await execute('afk_mark_read', { recordIds: [read.value.records[0].id] });
     assert.equal(marked.isError, false);
     assert.ok(marked.meta?.dshAfkRead);
@@ -135,16 +135,16 @@ test('isolated installed DSH: real command/projection/tool/scope pipeline, custo
     assert.equal((await execute('afk_mark_read', { recordIds: [read.value.records[0].id], unexpected: true })).isError, true, 'unknown input fields are rejected');
     const unread = await execute('afk_history', {});
     assert.equal(unread.isError, false);
-    assert.equal(unread.value.total, 1);
+    assert.equal(unread.value.total, 0);
     assert.equal(unread.value.totalAll, 2);
-    assert.equal(unread.value.records[0].afk, false);
+    assert.deepEqual(unread.value.records, []);
     const all = await execute('afk_history', { filter: 'all' });
     assert.equal(all.isError, false);
     assert.equal(all.value.total, 2);
     assert.equal(all.value.records[0].read, true);
     const replay = Session.create(/** @type {import('@deepseek-ai/dsh-session').SessionId} */ ('afk-runtime-replay'), agent.session.snapshotEvents());
     const replayState = stateOf(replay);
-    assert.equal(replayState.view.unread, 1);
+    assert.equal(replayState.view.unread, 0);
     assert.equal(replayState.records[1].read, true);
     // AFK cannot override a pre-existing monotonic denial.
     const removeGuard = ctx.tools.guard(exec => exec.name === 'ask_user_question' ? 'fixture policy denies ask' : undefined);
@@ -207,6 +207,26 @@ test('isolated installed DSH: real command/projection/tool/scope pipeline, custo
     const planAnswer = await ctx.userQuestions.ask({ agent, questions: [{ id: 'plan-review', question: 'Approve plan?', detail: 'Fixture plan', options: [{ label: 'Approve' }], intent: { kind: 'plan-review', approve: 'Approve' } }] });
     assert.equal(humanRequests, 3, 'plan review must still reach the human answerer');
     assert.notEqual(planAnswer.answers[0].custom, REPLY_PREFIX + '新的自动回复');
+    await config({ enabled: false, mode: 'auto-reply', reply });
+    for (const args of [{ questions }, { questions, timeout: -1 }]) {
+      const answered = await execute('ask_user_question', args);
+      assert.equal(answered.isError, false);
+      const record = stateOf().records.at(-1);
+      assert.ok(record);
+      assert.equal(record.status, 'answered');
+      assert.equal(record.read, true, 'timed and unlimited-wait standard answers auto-read through the real SDK');
+    }
+    const stopAnswerBlock = ctx.on('tools/post-execute', async (exec, _result, next) => exec.name === 'ask_user_question'
+      ? { kind: 'block', feedback: [{ type: 'text', text: 'fixture refuses a proposed answer result' }] } : next());
+    try {
+      assert.equal((await execute()).isError, true);
+      const failed = stateOf().records.at(-1);
+      assert.ok(failed);
+      assert.equal(failed.status, 'failed');
+      assert.equal(failed.read, false, 'a proposed answer rejected by final policy is not auto-read');
+    } finally {
+      stopAnswerBlock();
+    }
     // A newly-created independent session starts off and cannot inherit the other session’s AFK state.
     const other = /** @type {import('../types/test.js').FixtureAgent} */ (/** @type {unknown} */ ({ id: 'afk-runtime-other', session: host.sessions.create(/** @type {import('@deepseek-ai/dsh-session').SessionId} */ ('afk-runtime-other')) }));
     const otherScope = createScope(ctx, other, { parent: presetKey });

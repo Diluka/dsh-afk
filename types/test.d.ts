@@ -2,7 +2,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent';
 import type { Context, Fiber } from '@deepseek-ai/cordis';
 import type { Scope } from '@deepseek-ai/dsh-scope';
 import type { ToolExecutionResult } from '@deepseek-ai/dsh-tools';
-import type { AfkHistory, AfkReadReceipt, AfkSettings, AfkView, AfkScope } from './afk.js';
+import type { AfkHistory, AfkReadReceipt, AfkSettings, AfkView, AfkScope } from './afk.d.ts';
 import type { AskUserQuestionAnswer } from '@deepseek-ai/dsh-user-questions';
 
 /** Dynamic imports resolve from DSH_TEST_RUNTIME_DIR; declarations follow the matching installed SDK, never a mock service. */
@@ -22,6 +22,11 @@ export interface RuntimeModules {
   '@deepseek-ai/dsh-settings': typeof import('@deepseek-ai/dsh-settings');
   '@deepseek-ai/dsh-app-boot': typeof import('@deepseek-ai/dsh-app-boot');
   '@deepseek-ai/dsh-llm': typeof import('@deepseek-ai/dsh-llm');
+  '@deepseek-ai/dsh-typert-registry': typeof import('@deepseek-ai/dsh-typert-registry');
+  '@deepseek-ai/dsh-api-gateway': typeof import('@deepseek-ai/dsh-api-gateway');
+  '@deepseek-ai/dsh-api-remote-access': typeof import('@deepseek-ai/dsh-api-remote-access');
+  '@deepseek-ai/dsh-typert-protocol': typeof import('@deepseek-ai/dsh-typert-protocol');
+  '@deepseek-ai/dsh-session-query': typeof import('@deepseek-ai/dsh-session-query');
   '@deepseek-ai/dsh-typert-registry/client': typeof import('@deepseek-ai/dsh-typert-registry/client');
   '@deepseek-ai/dsh-api-gateway/client': typeof import('@deepseek-ai/dsh-api-gateway/client');
   '@deepseek-ai/dsh-commands/remote': typeof import('@deepseek-ai/dsh-commands/remote');
@@ -54,6 +59,6 @@ export type FixtureCommandValue<L extends string> = CommandInput<L> extends 'his
 export type CommandCarrierArgs = { args: { agentId: import('@deepseek-ai/dsh-session').SessionId; line: string; submittedAttachments: readonly import('@deepseek-ai/dsh-commands').CommandSubmitAttachment[] } };
 
 /** Minimal VM-only formatter boundary: no Client factory/global runtime or React is loaded. */
-export type FormatterNode = { name?: string; outcome?: { kind: string; text?: string } | null };
+export type FormatterNode = { name?: string | null; args?: string | null; outcome?: { kind: string; text?: string } | null };
 export type FormatterTranslate = (key: string, values?: Record<string, unknown>) => string;
-export type Formatter = (node: FormatterNode, t: FormatterTranslate) => { text: string; state: string };
+export type Formatter = (node: FormatterNode, t: FormatterTranslate) => { text: string; state: string; hidden?: boolean };

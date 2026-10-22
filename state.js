@@ -31,7 +31,7 @@ export const questionSchema = z.object({
   multiSelect: z.boolean().optional(),
 });
 const questionsSchema = z.array(questionSchema).min(1).refine(items => new Set(items.map(item => item.id)).size === items.length);
-const recordSchema = z.object({
+export const recordSchema = z.object({
   id: z.string(), callId: z.string(), time: z.number(), mode: settingsSchema.shape.mode.nullable(), afk: z.boolean().nullable(),
   requestState: requestStateSchema.nullable(),
   questions: questionsSchema, reply: z.string(), read: z.boolean(),
@@ -48,6 +48,9 @@ const stateSchema = z.object({
 });
 const idsSchema = z.array(z.string().min(1)).min(1).max(50).refine(ids => new Set(ids).size === ids.length);
 const readValueSchema = z.object({ type: z.literal('dsh-afk/read-v1'), readIds: z.array(z.string().min(1)) });
+const answerBatchSchema = z.object({
+  answers: z.array(z.object({ id: z.string(), selected: z.array(z.string()), custom: z.string().optional() }).strict()),
+}).loose();
 
 /** @param {AfkState} state @returns {AfkSettings} */
 export function settingsOf(state) {
@@ -92,6 +95,21 @@ function outcome(content) {
   return json(text) ?? text;
 }
 
+/**
+ * A submitted batch must name every question exactly once; array order is not significant.
+ * @param {unknown} value
+ * @param {AfkQuestion[]} questions
+ * @returns {import('@deepseek-ai/dsh-user-questions').AskUserQuestionAnswerItem[] | undefined}
+ */
+function submittedAnswers(value, questions) {
+  const parsed = answerBatchSchema.safeParse(value);
+  if (!parsed.success || parsed.data.pending) return undefined;
+  const answers = parsed.data.answers;
+  const ids = new Set(answers.map(answer => answer.id));
+  return answers.length === questions.length && ids.size === questions.length && questions.every(question => ids.has(question.id))
+    ? answers : undefined;
+}
+
 /** @param {AfkState} state @param {LogCoordinates} event @param {string} callId @param {unknown} args @returns {AfkState} */
 function recordCall(state, event, callId, args) {
   const questions = parseQuestions(args);
@@ -132,11 +150,17 @@ function recordResult(state, callId, result) {
     : automatic ? 'auto-replied' : isObject(answer) && answer.pending ? 'pending' : 'answered';
   const afk = blocked || automatic ? true : status === 'answered' ? false : null;
   const mode = blocked ? 'disable-ask' : automatic ? 'auto-reply' : null;
+  const submitted = submittedAnswers(answer, pending.questions);
+  // rc.2 has no author receipt for in-time replies. By the chosen rule, a complete
+  // non-AFK batch counts as submitted by the user; arbitrary successful output does not.
+  // Any AFK-tagged item keeps an incomplete/mixed automatic batch unread too.
+  const read = previous.read || (status === 'answered' && submitted !== undefined
+    && submitted.every(item => !item.custom?.startsWith(REPLY_PREFIX)));
   const records = [...state.records];
-  records[index] = { ...previous, status, afk, mode, reply: automatic ? reply : '', answer };
+  records[index] = { ...previous, status, afk, mode, reply: automatic ? reply : '', answer, read };
   return {
     ...state, pending: rest, records,
-    view: { ...state.view, revision: state.view.revision + 1 },
+    view: { ...state.view, unread: state.view.unread - Number(read && !previous.read), revision: state.view.revision + 1 },
   };
 }
 
@@ -189,7 +213,7 @@ function readToolResult(state, callId, result) {
  * @type {AfkProjection}
  */
 export const projection = {
-  key: KEY, stateSchema, stateVersion: 3,
+  key: KEY, stateSchema, stateVersion: 4,
   init(_header, inheritedEventCount = 0) {
     return {
       floor: inheritedEventCount, records: [], commands: [], pending: [], marks: [], requestState: null,
@@ -228,9 +252,12 @@ export const projection = {
       const callId = data.source.callId;
       const index = state.records.findLastIndex(record => record.callId === callId);
       if (index < 0) return state;
+      const previous = state.records[index];
+      const answer = outcome(data.content);
+      const read = previous.read || submittedAnswers(answer, previous.questions) !== undefined;
       const records = [...state.records];
-      records[index] = { ...records[index], status: 'answered', afk: false, mode: null, reply: '', answer: outcome(data.content) };
-      return { ...state, records, view: { ...state.view, revision: state.view.revision + 1 } };
+      records[index] = { ...previous, status: 'answered', afk: false, mode: null, reply: '', answer, read };
+      return { ...state, records, view: { ...state.view, unread: state.view.unread - Number(read && !previous.read), revision: state.view.revision + 1 } };
     }
     if (type === 'tool/call') {
       if (data.name === ASK) return recordCall(state, event, data.callId, json(data.arguments));

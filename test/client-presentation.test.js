@@ -25,13 +25,36 @@ const t = (key, values = {}) => Object.entries(values).reduce((text, [name, valu
 /** @param {unknown} data */
 const result = data => ({ name: 'afk', outcome: { kind: 'success', text: JSON.stringify(data) } });
 
-test('history commands show counts without raw JSON, questions or identifiers', () => {
+test('successful history queries stay hidden, including existing summaries without recorded arguments', () => {
   const value = summarize(result({ total: 5, totalAll: 6, unread: 5, filter: 'unread', records: [{ id: 'fixture-private-id', questions: [{ question: 'fixture question body' }] }] }), t);
   assert.equal(value.state, 'success');
+  assert.equal(value.hidden, true);
   assert.equal(value.text, '记录：未读 5 批 / 共 6 批');
   assert.doesNotMatch(value.text, /records|fixture|\{|\}/);
   const legacy = summarize(result({ total: 3, records: [] }), t);
   assert.equal(legacy.text, '记录：共 3 批');
+  assert.equal(legacy.hidden, true);
+});
+
+test('history requests hide pending and successful receipts but never failures or mutating commands', () => {
+  for (const args of ['history', ' history 0 20 unread ', 'history\t20\t20\tall']) {
+    const pending = summarize({ name: 'afk', args, outcome: null }, t);
+    assert.equal(pending.hidden, true, args);
+    const success = summarize({ ...result({ total: 0, totalAll: 1, unread: 0, records: [] }), args }, t);
+    assert.equal(success.hidden, true, args);
+    const failed = summarize({ name: 'afk', args, outcome: { kind: 'error', text: 'Permission denied' } }, t);
+    assert.notEqual(failed.hidden, true);
+    assert.equal(failed.state, 'error');
+    assert.match(failed.text, /Permission denied/);
+  }
+  for (const args of ['read ["fixture-id"]', 'on', 'off', 'set {"enabled":true}', 'history-other']) {
+    assert.notEqual(summarize({ name: 'afk', args, outcome: null }, t).hidden, true, args);
+  }
+  assert.notEqual(summarize({ name: 'other', args: 'history', outcome: null }, t).hidden, true);
+  const receipt = summarize({ ...result({ type: 'dsh-afk/read-v1', readIds: ['fixture-id'] }), args: 'read ["fixture-id"]' }, t);
+  assert.notEqual(receipt.hidden, true);
+  const settings = summarize({ ...result({ type: 'dsh-afk/settings-v1', settings: { enabled: true, mode: 'auto-reply' } }), args: 'on' }, t);
+  assert.notEqual(settings.hidden, true);
 });
 
 test('read acknowledgements never print the complete accumulated read-id collection', () => {

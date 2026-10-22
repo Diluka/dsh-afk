@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 const sourceDir = process.env.DSH_TEST_PLUGIN_DIR ?? fileURLToPath(new URL('..', import.meta.url));
 const runtime = process.env.DSH_TEST_RUNTIME_DIR;
 // These exact versions are the declared supported Host baseline, not values inferred from the implementation under test.
-const requiredPeers = { '@deepseek-ai/schemastery': '3.18.5', zod: '4.6.7' };
+const requiredPeers = { '@deepseek-ai/dsh-typert-protocol': '0.2.1-rc.2', '@deepseek-ai/schemastery': '3.18.5', zod: '4.6.7' };
 
 /** @param {unknown} value @returns {Record<string, unknown>} */
 function record(value) {
@@ -66,7 +66,7 @@ test('real Host runtime resolution supplies peers to dependency-free production 
         delete productionManifest.devDependencies;
         delete productionManifest.scripts;
         await writeFile(join(copiedSourceDir, 'package.json'), JSON.stringify(productionManifest));
-        for (const filename of ['index.js', 'state.js', 'config.js', 'client.js', 'cordis.patch.yml']) {
+        for (const filename of ['index.js', 'state.js', 'config.js', 'history.js', 'client.js', 'cordis.patch.yml']) {
           await copyFile(join(sourceDir, filename), join(copiedSourceDir, filename));
         }
         if (variant === 'external-source-link') await symlink(copiedSourceDir, profilePackage, 'dir');

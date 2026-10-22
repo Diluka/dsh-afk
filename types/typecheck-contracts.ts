@@ -6,11 +6,31 @@
 import type { AfkSettings, AfkState, AfkView, AfkPreferences } from './afk.js';
 import type { ClientModuleRequire, AfkClientContext, AfkToolbarSlotProps } from './client.js';
 import { historyOf, settingsOf } from '../state.js';
+import type { HistoryAddress, HistoryQuery } from './history.js';
+import type { HistoryReader } from './host.js';
+import type { AfkHistoryService } from '../history.js';
 
 declare const state: AfkState;
 declare const view: AfkView;
 declare const preferences: AfkPreferences;
 declare const requireClient: ClientModuleRequire;
+
+// The compile-only test is a consumer of both layers; declarations themselves
+// must not import the implementation to establish this relationship.
+declare const historyService: AfkHistoryService;
+declare const historyAddress: HistoryAddress;
+declare const historyQuery: HistoryQuery;
+const historyReader: HistoryReader = historyService;
+const historyPage: Promise<import('./afk.js').AfkHistory> = historyReader.history(historyAddress, historyQuery, new AbortController().signal);
+// @ts-expect-error Host readers require the authorized address object, not a wire string.
+historyReader.history('session-id', historyQuery, new AbortController().signal);
+// @ts-expect-error A history implementation must return a complete page, not just records.
+const incompleteHistoryReader: HistoryReader = { history: async () => ({ records: [] }) };
+declare const hostContext: import('./host.js').HostContext;
+// @ts-expect-error The Host capability does not expose the implementation's cancellation controller.
+hostContext.afkHistory.lifetime;
+void historyPage;
+void incompleteHistoryReader;
 
 const settings: AfkSettings = settingsOf(state);
 const page = historyOf(state, 0, 20, 'unread');

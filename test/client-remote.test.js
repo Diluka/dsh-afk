@@ -21,7 +21,7 @@ test('real rc.2 ClientRemote commands namespace requires remote.commands and exe
     { Context }, { default: SystemPrompt }, { default: Tools }, { default: Sessions },
     { default: Agents }, { default: Commands }, { default: Projections },
     { default: UserQuestions }, ask, { createScope }, TypertClient, GatewayClient,
-    { default: commandsContribution }, afk,
+    { default: commandsContribution }, afk, { default: TypertHost },
   ] = await Promise.all([
     load('@deepseek-ai/cordis'), load('@deepseek-ai/dsh-system-prompt'),
     load('@deepseek-ai/dsh-tools'), load('@deepseek-ai/dsh-session'),
@@ -33,6 +33,7 @@ test('real rc.2 ClientRemote commands namespace requires remote.commands and exe
     /** @type {Promise<typeof import('../index.js')>} */ (import(process.env.DSH_TEST_PLUGIN_DIR
       ? pathToFileURL(join(process.env.DSH_TEST_PLUGIN_DIR, 'index.js')).href
       : '../index.js')),
+    load('@deepseek-ai/dsh-typert-registry'),
   ]);
   const hostContext = new Context();
   // The same program loads Client typings, but this Context owns a real Host SessionStore.
@@ -52,7 +53,7 @@ test('real rc.2 ClientRemote commands namespace requires remote.commands and exe
   const agents = new Map();
   const signal = () => new AbortController().signal;
   try {
-    for (const service of [SystemPrompt, Tools, Sessions, Agents, Commands, Projections, UserQuestions]) {
+    for (const service of [TypertHost, SystemPrompt, Tools, Sessions, Agents, Commands, Projections, UserQuestions]) {
       hostFibers.push(await host.plugin(service));
     }
     hostFibers.push(await host.plugin(ask));
@@ -181,11 +182,14 @@ test('real rc.2 ClientRemote commands namespace requires remote.commands and exe
     const ordinary = await host.tools.execute({ callId: ordinaryCall, name: 'ask_user_question', arguments: ordinaryArgs, agent: b, signal: signal() });
     assert.equal(ordinary.isError, false);
     b.session.append('tool/result', { turn: 1, step: 0, message: { id: /** @type {import('@deepseek-ai/dsh-llm').MessageId} */ ('ordinary-off-result'), role: 'tool', source: { kind: 'tool', callId: ordinaryCall }, toolCallId: ordinaryCall, content: ordinary.content, isError: ordinary.isError } }, { surfaceOp: 'append' });
-    const ordinaryHistory = await success(b.id, '/afk history 0 20');
+    const ordinaryUnread = await success(b.id, '/afk history 0 20');
+    assert.equal(ordinaryUnread.total, 0);
+    assert.equal(ordinaryUnread.totalAll, 1);
+    assert.equal(ordinaryUnread.unread, 0);
+    const ordinaryHistory = await success(b.id, '/afk history 0 20 all');
     assert.equal(ordinaryHistory.total, 1);
-    assert.equal(ordinaryHistory.unread, 1);
     assert.equal(ordinaryHistory.records[0].afk, false);
-    assert.equal(ordinaryHistory.records[0].read, false);
+    assert.equal(ordinaryHistory.records[0].read, true);
     assert.equal(ordinaryHistory.records[0].status, 'answered');
 
     const replyA = 'Client namespace A: user away, continue within existing authority.';
@@ -226,7 +230,7 @@ test('real rc.2 ClientRemote commands namespace requires remote.commands and exe
     assert.ok(first.records[0].reply.endsWith(replyA));
     assert.equal(second.records.length, 1);
     assert.equal(second.records[0].questions[0].id, 'question-0');
-    assert.equal((await success(b.id, '/afk history 0 2')).total, 1);
+    assert.equal((await success(b.id, '/afk history 0 2')).total, 0);
     const newestId = first.records[0].id;
     const ack = await success(a.id, `/afk read ${JSON.stringify([newestId])}`);
     assert.equal(ack.type, 'dsh-afk/read-v1');
@@ -247,7 +251,7 @@ test('real rc.2 ClientRemote commands namespace requires remote.commands and exe
     const crossSession = await remoteExecute(b.id, `/afk read ${JSON.stringify([newestId])}`);
     assert.equal(crossSession.ok, false);
     assert.match(crossSession.error.message, /Unknown question record/);
-    assert.equal((await success(b.id, '/afk')).unread, 1);
+    assert.equal((await success(b.id, '/afk')).unread, 0);
     const beforeInvalidRead = await success(a.id, '/afk');
     for (const raw of ['{}', '[]', JSON.stringify(newestId), '[42]', newestId]) {
       const invalidRead = await remoteExecute(a.id, `/afk read ${raw}`);
@@ -309,7 +313,7 @@ test('real rc.2 ClientRemote commands namespace requires remote.commands and exe
     assert.equal((await success(a.id, '/afk history 0 20 all')).totalAll, 3);
     assert.equal((await success(b.id, '/afk history')).totalAll, 1);
     const aBeforeReadB = await success(a.id, '/afk history 0 20 all');
-    const bRecord = (await success(b.id, '/afk history')).records[0];
+    const bRecord = (await success(b.id, '/afk history 0 20 all')).records[0];
     await success(b.id, `/afk read ${JSON.stringify([bRecord.id])}`);
     assert.equal((await success(b.id, '/afk history')).unread, 0);
     assert.deepEqual(await success(a.id, '/afk history 0 20 all'), aBeforeReadB, 'global settings do not merge Session read receipts');
@@ -324,6 +328,10 @@ test('real rc.2 ClientRemote commands namespace requires remote.commands and exe
     assert.equal(globalHistory.records[0].afk, true);
     assert.equal(globalHistory.records[0].mode, 'auto-reply');
     assert.equal(globalHistory.records[0].requestState, null, 'no model Loop ran in this fixture, so no request snapshot is invented');
+    assert.equal(globalHistory.unread, 1);
+    await success(b.id, `/afk read ${JSON.stringify([globalHistory.records[0].id])}`);
+    assert.equal((await success(b.id, '/afk history')).unread, 0);
+    assert.deepEqual(await success(a.id, '/afk history 0 20 all'), aBeforeReadB, 'reading an AFK result under global scope still affects only its Session');
     assert.equal((await success(a.id, '/afk history 0 20 all')).totalAll, 3);
     assert.ok(wireCalls.some(call => call.agentId === a.id));
     assert.ok(wireCalls.some(call => call.agentId === b.id));

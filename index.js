@@ -9,9 +9,10 @@
 /** @typedef {import('./types/host.js').EffectiveSettings} EffectiveSettings */
 import { ASK, KEY, MARK_READ, REPLY_PREFIX, BLOCK_PREFIX, LEGACY_BLOCK_MESSAGE, REQUEST_STATE_PREFIX, projection, parseQuestions, settingsSchema, settingsOf, historyOf, markReadOf } from './state.js';
 import { effectiveSettings, readConfig } from './config.js';
+import { registerHistory } from './history.js';
 export { Config } from './config.js';
 
-export const inject = ['agents', 'commands', 'tools', 'sessionProjections', 'systemPrompt'];
+export const inject = ['agents', 'commands', 'tools', 'sessionProjections', 'systemPrompt', 'sessions', 'typert'];
 
 /** @param {unknown} value @returns {value is Record<string, unknown>} */
 function isObject(value) {
@@ -31,6 +32,7 @@ export async function apply(ctx, config) {
     scoped.effect(() => scoped.settings.configure({ auto: false }, owner));
   });
   ctx.sessionProjections.register(projection);
+  await registerHistory(ctx);
   /** @param {HostAgent | undefined} agent @returns {AfkState} */
   const stateOf = agent => {
     const state = agent && ctx.sessionProjections.stateOf(agent.session, KEY);
