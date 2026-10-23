@@ -42,7 +42,8 @@
   ],
   "scripts": {
     "test": "node --test test/*.test.js",
-    "check": "node --check index.js && node --check state.js && node --check config.js && node --check history.js && node --check client.js",
+    "test:runtime": "node scripts/test-runtime.js",
+    "check": "node --check index.js && node --check state.js && node --check config.js && node --check history.js && node --check client.js && node --check scripts/test-runtime.js",
     "typecheck": "tsc -p tsconfig.json --pretty false"
   },
   "peerDependencies": {

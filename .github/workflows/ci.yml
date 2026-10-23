@@ -55,7 +55,7 @@ jobs:
           DSH_TEST_RUNTIME_DIR: ${{ github.workspace }}/${{ matrix.dsh.directory }}
           DSH_TEST_RUNTIME_VERSION: ${{ matrix.dsh.version }}
         run: |
-          node --test --test-reporter=tap test/*.test.js | tee source-tests.tap
+          pnpm run test:runtime | tee source-tests.tap
           node -e "const fs=require('node:fs'); const text=fs.readFileSync('source-tests.tap','utf8'); if(!/^# skipped 0$/m.test(text)) throw new Error('Integration checks were skipped');"
       - name: Pack and inspect the distributable
         run: |
@@ -73,5 +73,5 @@ jobs:
           DSH_TEST_RUNTIME_VERSION: ${{ matrix.dsh.version }}
           DSH_TEST_PLUGIN_DIR: ${{ github.workspace }}/artifacts/unpacked/package
         run: |
-          node --test --test-reporter=tap test/*.test.js | tee package-tests.tap
+          pnpm run test:runtime | tee package-tests.tap
           node -e "const fs=require('node:fs'); const text=fs.readFileSync('package-tests.tap','utf8'); if(!/^# skipped 0$/m.test(text)) throw new Error('Packed integration checks were skipped');"

@@ -108,13 +108,13 @@ dsh plugin --profile web add "link:$PWD"
 ```bash
 pnpm run check
 pnpm run typecheck
-DSH_TEST_RUNTIME_DIR="$PWD" DSH_TEST_RUNTIME_VERSION=0.2.1-rc.3 pnpm test
-DSH_TEST_RUNTIME_DIR="$PWD/test/runtimes/rc2" DSH_TEST_RUNTIME_VERSION=0.2.1-rc.2 pnpm test
+DSH_TEST_RUNTIME_DIR="$PWD" DSH_TEST_RUNTIME_VERSION=0.2.1-rc.3 pnpm run test:runtime
+DSH_TEST_RUNTIME_DIR="$PWD/test/runtimes/rc2" DSH_TEST_RUNTIME_VERSION=0.2.1-rc.2 pnpm run test:runtime
 ```
 
 - `DSH_TEST_RUNTIME_DIR="$PWD"` 使用锁定 rc.3 开发 SDK；`test/runtimes/rc2` 使用旧版基线。两版均须运行全部真实框架隔离测试；`DSH_TEST_RUNTIME_VERSION` 防止误用祖先目录提供的另一版 SDK。不启动服务器、不调用模型、不读写用户 profile。
 - 也可将该变量设为另一个已确认 DSH 安装的绝对目录。仅运行 `pnpm test` 时部分集成检查会 skipped，必须如实报告，不能当完整通过。
-- [peer 测试](./test/peers.test.js) 用不带开发依赖和自身 node_modules 的副本，验证普通安装与外部 link 经真实宿主解析器共享 provider；别用原位开发依赖掩盖生产缺依赖。
+- [运行时测试入口](./scripts/test-runtime.js) 将源码或最终制品的运行文件复制到无自身 node_modules 的临时 payload，其父级仅提供所选真实 SDK 的公共 peer，完整功能测试不得回落到根开发 SDK 的另一版 peer；临时夹具在退出时清理，不修改 SDK 安装。[peer 测试](./test/peers.test.js) 同时检查功能 payload 的真实路径和 ESM 类身份，并另用真实宿主解析器验证普通安装与外部 link 的生产 provider；别用原位开发依赖或只导入模块掩盖完整功能链中的混版。
 - formatter VM/源码结构检查不等于 React 或 GUI 测试。UI 变化须在真实宿主检查交互、主题、键盘/焦点和错误状态，并恢复改动的用户设置、归档测试会话、关闭测试浏览器。
 - 逐文件运行语法检查；`node --check` 接多个文件参数不代表检查所有文件。项目未配置独立 lint 命令，不要声称运行了不存在的检查。
 
@@ -129,7 +129,7 @@ pnpm pack --out "$pack_dir/dsh-afk.tgz"
 mkdir "$pack_dir/unpacked"
 tar -xzf "$pack_dir/dsh-afk.tgz" -C "$pack_dir/unpacked"
 DSH_TEST_RUNTIME_DIR="$PWD" \
-DSH_TEST_PLUGIN_DIR="$pack_dir/unpacked/package" pnpm test
+DSH_TEST_PLUGIN_DIR="$pack_dir/unpacked/package" pnpm run test:runtime
 ```
 
 [分发清单](./package.json) 必须包含运行 JS 引用的生产声明文件；不打包测试声明、编译负例、SDK 开发依赖或本机产物。原创图标和中英文元数据随包分发。

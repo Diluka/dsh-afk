@@ -67,6 +67,18 @@ test('the selected real SDK uses one supported DSH release throughout its declar
   }
 });
 
+test('functional integration payload shares the selected real SDK peer providers', { skip: !runtime }, async () => {
+  assert.ok(runtime);
+  const runtimeRequire = createRequire(join(runtime, 'package.json'));
+  const pluginRequire = createRequire(join(sourceDir, 'index.js'));
+  for (const name of Object.keys(requiredPeers)) {
+    assert.equal(await realpath(pluginRequire.resolve(name)), await realpath(runtimeRequire.resolve(name)), `${name} must use the selected Host provider during functional tests`);
+  }
+  const { AfkHistoryService } = /** @type {typeof import('../history.js')} */ (await import(pathToFileURL(join(sourceDir, 'history.js')).href));
+  const { TypertRemoteService } = /** @type {typeof import('@deepseek-ai/dsh-typert-protocol')} */ (await import(pathToFileURL(runtimeRequire.resolve('@deepseek-ai/dsh-typert-protocol')).href));
+  assert.equal(Object.getPrototypeOf(AfkHistoryService), TypertRemoteService, 'the actual service must extend the selected Host ESM class, not another release');
+});
+
 test('real Host compatibility gate admits both supported releases without exemptions and rejects unverified versions', { skip: !runtime }, async () => {
   assert.ok(runtime);
   const runtimeRequire = createRequire(join(runtime, 'package.json'));
