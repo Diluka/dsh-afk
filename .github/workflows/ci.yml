@@ -18,13 +18,18 @@ concurrency:
 
 jobs:
   check:
-    name: Node ${{ matrix.node }} / types, tests and package
+    name: Node ${{ matrix.node }} / DSH ${{ matrix.dsh.version }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         node: ['22.x', '24.x']
+        dsh:
+          - version: '0.2.1-rc.2'
+            directory: 'test/runtimes/rc2'
+          - version: '0.2.1-rc.3'
+            directory: '.'
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -47,7 +52,8 @@ jobs:
         run: pnpm run typecheck
       - name: Test source against the pinned real DSH SDKs
         env:
-          DSH_TEST_RUNTIME_DIR: ${{ github.workspace }}
+          DSH_TEST_RUNTIME_DIR: ${{ github.workspace }}/${{ matrix.dsh.directory }}
+          DSH_TEST_RUNTIME_VERSION: ${{ matrix.dsh.version }}
         run: |
           node --test --test-reporter=tap test/*.test.js | tee source-tests.tap
           node -e "const fs=require('node:fs'); const text=fs.readFileSync('source-tests.tap','utf8'); if(!/^# skipped 0$/m.test(text)) throw new Error('Integration checks were skipped');"
@@ -56,14 +62,15 @@ jobs:
           mkdir -p artifacts/unpacked
           pnpm pack --out artifacts/dsh-afk-ci.tgz
           tar -xzf artifacts/dsh-afk-ci.tgz -C artifacts/unpacked
-          node --input-type=module -e "import { readFile, access } from 'node:fs/promises'; const p=JSON.parse(await readFile('artifacts/unpacked/package/package.json','utf8')); for(const f of ['index.js','state.js','config.js','history.js','client.js','icon.svg','locale/en.json','locale/zh.json','types/afk.d.ts','types/host.d.ts','types/client.d.ts','types/history.d.ts']) await access('artifacts/unpacked/package/'+f); if(p.engines.dsh!=='0.2.1-rc.2') throw new Error('Unexpected compatibility target');"
+          node --input-type=module -e "import { readFile, access } from 'node:fs/promises'; const p=JSON.parse(await readFile('artifacts/unpacked/package/package.json','utf8')); for(const f of ['index.js','state.js','config.js','history.js','client.js','icon.svg','locale/en.json','locale/zh.json','types/afk.d.ts','types/host.d.ts','types/client.d.ts','types/history.d.ts']) await access('artifacts/unpacked/package/'+f); if(p.engines.dsh!=='0.2.1-rc.2 || 0.2.1-rc.3') throw new Error('Unexpected compatibility target');"
       - name: Typecheck standalone packed JavaScript and declarations
         run: |
           node --input-type=module -e "import { writeFile } from 'node:fs/promises'; await writeFile('artifacts/tsconfig.package.json',JSON.stringify({extends:'../tsconfig.json',include:['unpacked/package/*.js','unpacked/package/types/**/*.d.ts'],exclude:[]}));"
           pnpm exec tsc -p artifacts/tsconfig.package.json --pretty false
       - name: Test the packed plugin against the same real DSH SDKs
         env:
-          DSH_TEST_RUNTIME_DIR: ${{ github.workspace }}
+          DSH_TEST_RUNTIME_DIR: ${{ github.workspace }}/${{ matrix.dsh.directory }}
+          DSH_TEST_RUNTIME_VERSION: ${{ matrix.dsh.version }}
           DSH_TEST_PLUGIN_DIR: ${{ github.workspace }}/artifacts/unpacked/package
         run: |
           node --test --test-reporter=tap test/*.test.js | tee package-tests.tap

@@ -20,12 +20,20 @@
 
 ## 环境与依赖
 
-- 兼容目标以 [package.json](./package.json) 的 `engines` 为准；当前为 Node.js 22+、DSH 0.2.1-rc.2。pnpm 版本由 `packageManager` 固定。
+- 兼容目标以 [package.json](./package.json) 的 `engines` 为准；当前为 Node.js 22+、DSH 0.2.1-rc.2 和 0.2.1-rc.3。pnpm 版本由 `packageManager` 固定。
 - 宿主已有的公共库优先使用必需 `peerDependencies`，开发与 CI 在 `devDependencies` 精确固定同版；不要引入普通生产依赖的重复副本。
-- 当前公共 peer 为 Zod 4.6.7、Schemastery 3.18.5、Typert Protocol 0.2.1-rc.2。保留 [pnpm-workspace.yaml](./pnpm-workspace.yaml) 的 `autoInstallPeers: false`，缺失时不要靠自动选版掩盖问题，也不要把必需 peer 标为 optional。
+- 当前公共 peer 为 Zod 4.6.7、Schemastery 3.18.5、Typert Protocol `0.2.1-rc.2 || 0.2.1-rc.3`；根开发 SDK 精确固定 rc.3，旧版集成夹具 [rc2](./test/runtimes/rc2/package.json) 精确固定 rc.2，两者共用冻结锁文件。保留 [pnpm-workspace.yaml](./pnpm-workspace.yaml) 的 `autoInstallPeers: false`，缺失时不要靠自动选版掩盖问题，也不要把必需 peer 标为 optional。
 - peer 是兼容声明，不是自动运行时保护。改版本前核对实际宿主及其解析契约，验证生产副本确实使用宿主同一 provider。
 - React 从宿主模块表获取，其他 Client 能力通过 Service 注入；不要为了 JSDoc 新增跨插件运行时导入。
 - SDK 投影声明的 Zod minor 类型身份通过定向 override 对齐；修改该 override 时同时验证类型和实际运行行为，不全局覆盖未知依赖。
+
+## DSH 升级与历史版本支持策略
+
+- 功能与 API 适配以本次明确的目标版本为准；`latest`、`next` 等移动标签须先解析为精确发行版本，再更新依赖、兼容声明与验证矩阵，不预先宣称支持尚未核验的未来版本。
+- 历史版本提供有限支持：原则上至少支持目标版本的上一个历史发行版本。若其 API 已无法简单支撑当前功能，则明确停止支持；不为保留历史版本引入复杂桥接、成套分叉或额外兼容层。更早版本同样遵循这一成本边界。
+- 跨 `0.x` 版本线升级（如 `0.2.x` → `0.3.x`）时，需要历史兼容适配的范围尽量收敛到上一条版本线的最后一个小版本，不逐个回补该版本线的早期发行。
+- API 完全兼容、无需额外适配的版本，不因年代久远而移除已声明的支持；上一条版本线的收敛原则不用于机械删除这类兼容版本。保留或停止支持均须依据实际契约与验证证据，并同步 [package.json](./package.json)、锁文件及用户说明。
+- E2E 测试矩阵必须包含最新目标版本，以及有代表性的、仍受支持的历史版本；优先覆盖上一历史版本、上一条受支持 `0.x` 版本线的最后一个小版本，以及实际存在 API 差异的版本，不必穷举 API 相同的所有旧发行。真实 SDK 隔离集成、打包验证与 GUI E2E 分别记录；前两者不能冒充 E2E，未执行的覆盖须明确说明。
 
 ## 本地准备与链接安装
 
@@ -100,10 +108,11 @@ dsh plugin --profile web add "link:$PWD"
 ```bash
 pnpm run check
 pnpm run typecheck
-DSH_TEST_RUNTIME_DIR="$PWD" pnpm test
+DSH_TEST_RUNTIME_DIR="$PWD" DSH_TEST_RUNTIME_VERSION=0.2.1-rc.3 pnpm test
+DSH_TEST_RUNTIME_DIR="$PWD/test/runtimes/rc2" DSH_TEST_RUNTIME_VERSION=0.2.1-rc.2 pnpm test
 ```
 
-- `DSH_TEST_RUNTIME_DIR="$PWD"` 使用锁定开发 SDK，运行全部真实框架隔离测试；不启动服务器、不调用模型、不读写用户 profile。
+- `DSH_TEST_RUNTIME_DIR="$PWD"` 使用锁定 rc.3 开发 SDK；`test/runtimes/rc2` 使用旧版基线。两版均须运行全部真实框架隔离测试；`DSH_TEST_RUNTIME_VERSION` 防止误用祖先目录提供的另一版 SDK。不启动服务器、不调用模型、不读写用户 profile。
 - 也可将该变量设为另一个已确认 DSH 安装的绝对目录。仅运行 `pnpm test` 时部分集成检查会 skipped，必须如实报告，不能当完整通过。
 - [peer 测试](./test/peers.test.js) 用不带开发依赖和自身 node_modules 的副本，验证普通安装与外部 link 经真实宿主解析器共享 provider；别用原位开发依赖掩盖生产缺依赖。
 - formatter VM/源码结构检查不等于 React 或 GUI 测试。UI 变化须在真实宿主检查交互、主题、键盘/焦点和错误状态，并恢复改动的用户设置、归档测试会话、关闭测试浏览器。
@@ -125,7 +134,7 @@ DSH_TEST_PLUGIN_DIR="$pack_dir/unpacked/package" pnpm test
 
 [分发清单](./package.json) 必须包含运行 JS 引用的生产声明文件；不打包测试声明、编译负例、SDK 开发依赖或本机产物。原创图标和中英文元数据随包分发。
 
-[CI](./.github/workflows/ci.yml) 在 push、PR、手动触发时运行 Node 22/24 的冻结锁安装、语法、类型、源码集成、打包与制品集成检查。保持：
+[CI](./.github/workflows/ci.yml) 在 push、PR、手动触发时运行 Node 22/24 × DSH rc.2/rc.3 矩阵的冻结锁安装、语法、类型、源码集成、打包与制品集成检查；类型检查使用根目录 rc.3 SDK，两版均执行真实运行时集成。保持：
 
 - 依赖脚本禁用、Actions 固定完整 SHA、`contents: read`、checkout 不保留凭据；无自动发布或部署。
 - Bash `pipefail` 保证 `node --test | tee` 不吞失败；任何 skipped 检查使 CI 失败。

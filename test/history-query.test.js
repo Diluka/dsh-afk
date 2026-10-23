@@ -92,7 +92,7 @@ async function fixture(t) {
   fibers.push(historyFiber);
 
   // Admission and network IO only: all authorization, lookup, dispatch,
-  // Session storage and projection folds below are the actual rc.2 services.
+  // Session storage and projection folds below are the selected real SDK services.
   const peerAbort = new AbortController();
   /** @type {Omit<PeerScope, 'principal'> & {principal: PeerScope['principal']}} */
   const peer = {

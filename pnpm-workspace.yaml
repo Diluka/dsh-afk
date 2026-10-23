@@ -1,3 +1,6 @@
+packages:
+  - test/runtimes/rc2
+
 autoInstallPeers: false
 
 # Keep the projection declaration's Zod identity aligned with our schema library.
