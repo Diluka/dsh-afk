@@ -2,7 +2,7 @@
 
 # dsh-afk
 
-为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 提供离开模式。暂时离开时，让 Agent 按你的设置自动应答或停止提问，回来后再查看提问记录。
+为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 提供离开模式。**AFK** 是 **Away From Keyboard** 的缩写，意为「暂时离开键盘」。暂时离开时，让 Agent 按你的设置自动应答或停止提问，回来后再查看提问记录。
 
 ## 功能
 
