@@ -25,7 +25,7 @@
 - 当前公共 peer 为 Zod 4.6.7、Schemastery 3.18.5、Typert Protocol `0.2.1-rc.2 || 0.2.1-rc.3`；根开发 SDK 精确固定 rc.3，旧版集成夹具 [rc2](./test/runtimes/rc2/package.json) 精确固定 rc.2，两者共用冻结锁文件。保留 [pnpm-workspace.yaml](./pnpm-workspace.yaml) 的 `autoInstallPeers: false`，缺失时不要靠自动选版掩盖问题，也不要把必需 peer 标为 optional。
 - peer 是兼容声明，不是自动运行时保护。改版本前核对实际宿主及其解析契约，验证生产副本确实使用宿主同一 provider。
 - React 从宿主模块表获取，其他 Client 能力通过 Service 注入；不要为了 JSDoc 新增跨插件运行时导入。
-- SDK 投影声明的 Zod minor 类型身份通过定向 override 对齐；修改该 override 时同时验证类型和实际运行行为，不全局覆盖未知依赖。
+- SDK 投影声明的 Zod minor 类型身份通过定向 override 对齐；修改该 override 时同时验证类型和实际运行行为，不全局覆盖未知依赖。双版本 SDK 使用 `hoistPattern` 排除 `@deepseek-ai/dsh-*` 的共享提升，避免未声明的 SDK 类型导入误取另一版本；保留其他包的默认提升供原生加载器使用。增量升级和干净安装都必须通过类型检查，不能只验证全新 worktree。
 
 ## DSH 升级与历史版本支持策略
 

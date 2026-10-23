@@ -40,6 +40,7 @@ test('production manifest requires Host-owned peers, with exact matching develop
   // This contract is about the maintained workspace's package-manager policy.
   const workspace = await readFile(new URL('../pnpm-workspace.yaml', import.meta.url), 'utf8');
   assert.match(workspace, /^autoInstallPeers:\s*false\s*$/m);
+  assert.match(workspace, /^\s*- ['"]!@deepseek-ai\/dsh-\*['"]\s*$/m, 'dual SDK declarations must not depend on the hidden hoist pool or installation order');
 });
 
 /** @param {ReturnType<typeof createRequire>} runtimeRequire */
@@ -57,7 +58,9 @@ test('the selected real SDK uses one supported DSH release throughout its declar
   const runtimeRequire = createRequire(join(runtime, 'package.json'));
   const version = await runtimeVersionOf(runtimeRequire);
   const manifest = await manifestOf(join(runtime, 'package.json'));
-  const dependencies = { ...record(manifest.dependencies ?? {}), ...record(manifest.devDependencies ?? {}) };
+  // Production CLI installations do not install the published manifest's devDependencies.
+  // Workspace SDK fixtures, in contrast, intentionally provide their SDKs as devDependencies.
+  const dependencies = record(manifest.dependencies ?? manifest.devDependencies ?? {});
   const names = Object.keys(dependencies).filter(name => name.startsWith('@deepseek-ai/dsh-'));
   assert.ok(names.includes('@deepseek-ai/dsh-app-boot'));
   for (const name of names) {
