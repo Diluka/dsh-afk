@@ -16,7 +16,7 @@ const load = async name => {
 // plugin, session projection and tool execution are the installed real modules.
 // Only the Connection carrier is replaced: named wire arguments are forwarded
 // in memory to the public Host command entry point instead of using HTTP/auth.
-test('real rc.2 ClientRemote commands namespace requires remote.commands and executes isolated AFK operations', { skip: !runtime }, async () => {
+test('real ClientRemote commands namespace requires remote.commands and executes isolated AFK operations', { skip: !runtime }, async () => {
   const [
     { Context }, { default: SystemPrompt }, { default: Tools }, { default: Sessions },
     { default: Agents }, { default: Commands }, { default: Projections },

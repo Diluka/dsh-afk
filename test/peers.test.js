@@ -8,8 +8,12 @@ import { tmpdir } from 'node:os';
 
 const sourceDir = process.env.DSH_TEST_PLUGIN_DIR ?? fileURLToPath(new URL('..', import.meta.url));
 const runtime = process.env.DSH_TEST_RUNTIME_DIR;
-// These exact versions are the declared supported Host baseline, not values inferred from the implementation under test.
-const requiredPeers = { '@deepseek-ai/dsh-typert-protocol': '0.2.1-rc.2', '@deepseek-ai/schemastery': '3.18.5', zod: '4.6.7' };
+// Release targets, independent of the plugin manifest under test. Do not accept
+// arbitrary future prereleases just because npm's moving `next` tag changes.
+const supportedRuntimes = ['0.2.1-rc.2', '0.2.1-rc.3'];
+const commonPeers = { '@deepseek-ai/schemastery': '3.18.5', zod: '4.6.7' };
+const requiredPeers = { '@deepseek-ai/dsh-typert-protocol': '0.2.1-rc.2 || 0.2.1-rc.3', ...commonPeers };
+const developmentPeers = { '@deepseek-ai/dsh-typert-protocol': '0.2.1-rc.3', ...commonPeers };
 
 /** @param {unknown} value @returns {Record<string, unknown>} */
 function record(value) {
@@ -25,9 +29,10 @@ test('production manifest requires Host-owned peers, with exact matching develop
   const manifest = await manifestOf(join(sourceDir, 'package.json'));
   assert.deepEqual(manifest.dependencies ?? {}, {});
   assert.deepEqual(record(manifest.peerDependencies), requiredPeers);
+  assert.equal(record(manifest.engines).dsh, '0.2.1-rc.2 || 0.2.1-rc.3');
   const development = record(manifest.devDependencies);
   const meta = record(manifest.peerDependenciesMeta ?? {});
-  for (const [name, version] of Object.entries(requiredPeers)) {
+  for (const [name, version] of Object.entries(developmentPeers)) {
     assert.equal(development[name], version);
     assert.notEqual(meta[name] && record(meta[name]).optional, true, `${name} is required, not optional`);
   }
@@ -35,6 +40,60 @@ test('production manifest requires Host-owned peers, with exact matching develop
   // This contract is about the maintained workspace's package-manager policy.
   const workspace = await readFile(new URL('../pnpm-workspace.yaml', import.meta.url), 'utf8');
   assert.match(workspace, /^autoInstallPeers:\s*false\s*$/m);
+  assert.match(workspace, /^\s*- ['"]!@deepseek-ai\/dsh-\*['"]\s*$/m, 'dual SDK declarations must not depend on the hidden hoist pool or installation order');
+});
+
+/** @param {ReturnType<typeof createRequire>} runtimeRequire */
+async function runtimeVersionOf(runtimeRequire) {
+  const metadata = await manifestOf(runtimeRequire.resolve('@deepseek-ai/dsh-app-boot/package.json'));
+  const version = metadata.version;
+  assert.ok(typeof version === 'string');
+  assert.ok(supportedRuntimes.includes(version), 'the selected Host SDK must be a supported release');
+  if (process.env.DSH_TEST_RUNTIME_VERSION) assert.equal(version, process.env.DSH_TEST_RUNTIME_VERSION, 'CI must exercise the requested release, not an ancestor fallback');
+  return version;
+}
+
+test('the selected real SDK uses one supported DSH release throughout its declared packages', { skip: !runtime }, async () => {
+  assert.ok(runtime);
+  const runtimeRequire = createRequire(join(runtime, 'package.json'));
+  const version = await runtimeVersionOf(runtimeRequire);
+  const manifest = await manifestOf(join(runtime, 'package.json'));
+  // Production CLI installations do not install the published manifest's devDependencies.
+  // Workspace SDK fixtures, in contrast, intentionally provide their SDKs as devDependencies.
+  const dependencies = record(manifest.dependencies ?? manifest.devDependencies ?? {});
+  const names = Object.keys(dependencies).filter(name => name.startsWith('@deepseek-ai/dsh-'));
+  assert.ok(names.includes('@deepseek-ai/dsh-app-boot'));
+  for (const name of names) {
+    assert.equal(dependencies[name], version, `${name} must pin the selected release`);
+    const installed = await manifestOf(runtimeRequire.resolve(`${name}/package.json`));
+    assert.equal(installed.version, version, `${name} must resolve to that release`);
+  }
+});
+
+test('functional integration payload shares the selected real SDK peer providers', { skip: !runtime }, async () => {
+  assert.ok(runtime);
+  const runtimeRequire = createRequire(join(runtime, 'package.json'));
+  const pluginRequire = createRequire(join(sourceDir, 'index.js'));
+  for (const name of Object.keys(requiredPeers)) {
+    assert.equal(await realpath(pluginRequire.resolve(name)), await realpath(runtimeRequire.resolve(name)), `${name} must use the selected Host provider during functional tests`);
+  }
+  const { AfkHistoryService } = /** @type {typeof import('../history.js')} */ (await import(pathToFileURL(join(sourceDir, 'history.js')).href));
+  const { TypertRemoteService } = /** @type {typeof import('@deepseek-ai/dsh-typert-protocol')} */ (await import(pathToFileURL(runtimeRequire.resolve('@deepseek-ai/dsh-typert-protocol')).href));
+  assert.equal(Object.getPrototypeOf(AfkHistoryService), TypertRemoteService, 'the actual service must extend the selected Host ESM class, not another release');
+});
+
+test('real Host compatibility gate admits both supported releases without exemptions and rejects unverified versions', { skip: !runtime }, async () => {
+  assert.ok(runtime);
+  const runtimeRequire = createRequire(join(runtime, 'package.json'));
+  const { evaluatePluginCompatibility } = /** @type {typeof import('@deepseek-ai/dsh-app-boot')} */ (await import(pathToFileURL(runtimeRequire.resolve('@deepseek-ai/dsh-app-boot')).href));
+  const manifest = await manifestOf(join(sourceDir, 'package.json'));
+  for (const version of supportedRuntimes) assert.equal(evaluatePluginCompatibility(manifest, {}, version), undefined);
+  for (const version of ['0.2.1-rc.1', '0.2.1-rc.4', '0.2.1', '0.3.0']) {
+    const issue = evaluatePluginCompatibility(manifest, {}, version);
+    assert.ok(issue, `${version} must remain unsupported`);
+    assert.equal(issue.exempted, false);
+    assert.deepEqual(issue.requirements, { 'engines.dsh': '0.2.1-rc.2 || 0.2.1-rc.3' });
+  }
 });
 
 // Node's test runner isolates this file from the other integration files. The
@@ -43,6 +102,7 @@ test('production manifest requires Host-owned peers, with exact matching develop
 test('real Host runtime resolution supplies peers to dependency-free production package copies', { skip: !runtime }, async t => {
   assert.ok(runtime);
   const runtimeRequire = createRequire(join(runtime, 'package.json'));
+  const expectedPeers = { '@deepseek-ai/dsh-typert-protocol': await runtimeVersionOf(runtimeRequire), ...commonPeers };
   const { Context } = /** @type {typeof import('@deepseek-ai/cordis')} */ (await import(pathToFileURL(runtimeRequire.resolve('@deepseek-ai/cordis')).href));
   const { createRuntimeResolution, loadProfileDirectory, PluginPackages } = /** @type {typeof import('@deepseek-ai/dsh-app-boot')} */ (await import(pathToFileURL(runtimeRequire.resolve('@deepseek-ai/dsh-app-boot')).href));
   for (const variant of ['installed-directory', 'external-source-link']) {
@@ -82,7 +142,7 @@ test('real Host runtime resolution supplies peers to dependency-free production 
         const provided = {};
         /** @type {Map<string, { directory: string, resolved: string }>} */
         const providers = new Map();
-        for (const [name, expectedVersion] of Object.entries(requiredPeers)) {
+        for (const [name, expectedVersion] of Object.entries(expectedPeers)) {
           const packageManifest = runtimeRequire.resolve(`${name}/package.json`);
           const metadata = await manifestOf(packageManifest);
           assert.equal(metadata.version, expectedVersion, `the selected real Host must provide the supported ${name} baseline`);
