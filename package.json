@@ -1,6 +1,6 @@
 {
   "name": "dsh-afk",
-  "version": "0.3.7",
+  "version": "0.4.0",
   "private": true,
   "packageManager": "pnpm@10.34.1",
   "description": "Global or per-session AFK controls, configurable automatic replies, and durable question history for DeepSeek Harness.",
