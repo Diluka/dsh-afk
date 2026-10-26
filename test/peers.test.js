@@ -8,11 +8,13 @@ import { tmpdir } from 'node:os';
 
 const sourceDir = process.env.DSH_TEST_PLUGIN_DIR ?? fileURLToPath(new URL('..', import.meta.url));
 const runtime = process.env.DSH_TEST_RUNTIME_DIR;
-// Release targets, independent of the plugin manifest under test. Do not accept
-// arbitrary future prereleases just because npm's moving `next` tag changes.
-const supportedRuntimes = ['0.2.1-rc.2', '0.2.1-rc.3'];
+// Published releases within the verified API boundaries, independent of the manifest.
+// Keep the upper bound fixed instead of following npm's moving tags or future releases.
+const supportedRuntimes = ['0.2.1-alpha.3', '0.2.1-alpha.4', '0.2.1-alpha.5', '0.2.1-rc.1', '0.2.1-rc.2', '0.2.1-rc.3'];
+const compatibilityRange = '>=0.2.1-alpha.3 <=0.2.1-rc.3';
 const commonPeers = { '@deepseek-ai/schemastery': '3.18.5', zod: '4.6.7' };
-const requiredPeers = { '@deepseek-ai/dsh-typert-protocol': '0.2.1-rc.2 || 0.2.1-rc.3', ...commonPeers };
+const requiredPeers = { '@deepseek-ai/dsh-typert-protocol': compatibilityRange,
+  '@deepseek-ai/schemastery': '3.18.5-alpha.2 || 3.18.5', zod: '4.4.3 || 4.6.7' };
 const developmentPeers = { '@deepseek-ai/dsh-typert-protocol': '0.2.1-rc.3', ...commonPeers };
 
 /** @param {unknown} value @returns {Record<string, unknown>} */
@@ -29,7 +31,7 @@ test('production manifest requires Host-owned peers, with exact matching develop
   const manifest = await manifestOf(join(sourceDir, 'package.json'));
   assert.deepEqual(manifest.dependencies ?? {}, {});
   assert.deepEqual(record(manifest.peerDependencies), requiredPeers);
-  assert.equal(record(manifest.engines).dsh, '0.2.1-rc.2 || 0.2.1-rc.3');
+  assert.equal(record(manifest.engines).dsh, compatibilityRange);
   const development = record(manifest.devDependencies);
   const meta = record(manifest.peerDependenciesMeta ?? {});
   for (const [name, version] of Object.entries(developmentPeers)) {
@@ -82,17 +84,21 @@ test('functional integration payload shares the selected real SDK peer providers
   assert.equal(Object.getPrototypeOf(AfkHistoryService), TypertRemoteService, 'the actual service must extend the selected Host ESM class, not another release');
 });
 
-test('real Host compatibility gate admits both supported releases without exemptions and rejects unverified versions', { skip: !runtime }, async () => {
+test('real Host compatibility gates admit the bounded supported releases without exemptions and reject versions outside the boundaries', { skip: !runtime }, async () => {
   assert.ok(runtime);
   const runtimeRequire = createRequire(join(runtime, 'package.json'));
+  const selectedVersion = await runtimeVersionOf(runtimeRequire);
   const { evaluatePluginCompatibility } = /** @type {typeof import('@deepseek-ai/dsh-app-boot')} */ (await import(pathToFileURL(runtimeRequire.resolve('@deepseek-ai/dsh-app-boot')).href));
   const manifest = await manifestOf(join(sourceDir, 'package.json'));
   for (const version of supportedRuntimes) assert.equal(evaluatePluginCompatibility(manifest, {}, version), undefined);
-  for (const version of ['0.2.1-rc.1', '0.2.1-rc.4', '0.2.1', '0.3.0']) {
+  for (const version of ['0.1.7-rc.2', '0.2.0-rc.2', '0.2.1-alpha.1', '0.2.1-alpha.2', '0.2.1-rc.4', '0.2.1', '0.3.0']) {
     const issue = evaluatePluginCompatibility(manifest, {}, version);
     assert.ok(issue, `${version} must remain unsupported`);
     assert.equal(issue.exempted, false);
-    assert.deepEqual(issue.requirements, { 'engines.dsh': '0.2.1-rc.2 || 0.2.1-rc.3' });
+    // alpha.3 checks DSH peers; alpha.4 introduced engines.dsh and renamed this result field.
+    const legacyGate = selectedVersion === '0.2.1-alpha.3';
+    assert.deepEqual(record(issue)[legacyGate ? 'peers' : 'requirements'], legacyGate
+      ? { '@deepseek-ai/dsh-typert-protocol': compatibilityRange } : { 'engines.dsh': compatibilityRange });
   }
 });
 
@@ -102,7 +108,9 @@ test('real Host compatibility gate admits both supported releases without exempt
 test('real Host runtime resolution supplies peers to dependency-free production package copies', { skip: !runtime }, async t => {
   assert.ok(runtime);
   const runtimeRequire = createRequire(join(runtime, 'package.json'));
-  const expectedPeers = { '@deepseek-ai/dsh-typert-protocol': await runtimeVersionOf(runtimeRequire), ...commonPeers };
+  const version = await runtimeVersionOf(runtimeRequire);
+  const expectedPeers = { '@deepseek-ai/dsh-typert-protocol': version,
+    ...(version.startsWith('0.2.1-alpha.') ? { '@deepseek-ai/schemastery': '3.18.5-alpha.2', zod: '4.4.3' } : commonPeers) };
   const { Context } = /** @type {typeof import('@deepseek-ai/cordis')} */ (await import(pathToFileURL(runtimeRequire.resolve('@deepseek-ai/cordis')).href));
   const { createRuntimeResolution, loadProfileDirectory, PluginPackages } = /** @type {typeof import('@deepseek-ai/dsh-app-boot')} */ (await import(pathToFileURL(runtimeRequire.resolve('@deepseek-ai/dsh-app-boot')).href));
   for (const variant of ['installed-directory', 'external-source-link']) {

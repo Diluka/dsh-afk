@@ -7,6 +7,7 @@
 /** @import { SessionId } from '@deepseek-ai/dsh-session/types' */
 /** @import { SessionBinding, SessionReference } from '@deepseek-ai/dsh-api-session-controller/client' */
 /** @import { ConfigForm } from '@deepseek-ai/dsh-client-ui-settings/client' */
+/** @import { SettingsPathOpView } from '@deepseek-ai/dsh-api-remotes/client' */
 window.__ModuleLoader__.load({
   id: 'dsh-afk',
   factory(require) {
@@ -20,7 +21,11 @@ window.__ModuleLoader__.load({
         'scope.title': 'Settings scope', 'scope.session': 'Per session', 'scope.global': 'Unified across sessions',
         'scope.hint': 'Shared within this Host profile. Changing scope preserves each session’s own settings; history and read status always stay per session.',
         'scope.global.hint': 'Unified mode uses its own saved settings (off initially), not a copy of the selected session. Its switch affects all sessions.',
-        'scope.apply': 'Apply scope', 'scope.loading': 'Loading AFK scope…', 'scope.error': 'The Host has not exposed AFK scope settings. Check the loaded version and read access; an upgraded Host may need an approved restart.',
+        'scope.apply': 'Apply settings', 'settings.profile': 'Profile settings',
+        'tools.label': 'Provide history tools to the Agent',
+        'tools.hint': 'Controls afk_history and afk_mark_read for this profile, independently of AFK scope. Turning this off does not affect automatic AFK replies, history in the UI, or commands.',
+        'tools.unavailable': 'This Host version does not expose the history-tool switch.',
+        'scope.loading': 'Loading AFK scope…', 'scope.error': 'The Host has not exposed AFK scope settings. Check the loaded version and read access; an upgraded Host may need an approved restart.',
         'scope.legacy': 'The previous Host is still running in per-session mode. Global settings need the upgraded Host.',
         'settings.enabled.global': 'Enable AFK for every session in this profile', 'settings.global': 'Shared AFK settings',
         'error.conflict': 'Settings changed elsewhere. Latest values were loaded; review and try again.',
@@ -58,7 +63,11 @@ window.__ModuleLoader__.load({
         'scope.title': '设置作用范围', 'scope.session': '按会话单独', 'scope.global': '全局统一',
         'scope.hint': '全局指当前 Host 的 profile。切换范围保留各会话原设置；提问记录和已读状态始终按会话独立。',
         'scope.global.hint': '全局模式使用独立保存的配置，初始为关闭，不复制所选会话的设置。全局开关会影响所有会话。',
-        'scope.apply': '应用范围', 'scope.loading': '正在读取 AFK 作用范围…', 'scope.error': '后台暂未提供 AFK 作用范围配置，请核对加载版本与读取权限；刚升级的后台可能需要经确认后重启。',
+        'scope.apply': '应用设置', 'settings.profile': '当前 profile 配置',
+        'tools.label': '向 Agent 提供历史工具',
+        'tools.hint': '统一控制当前 profile 是否向模型提供 afk_history 和 afk_mark_read，不随 AFK 作用范围切换。关闭不影响 AFK 自动应答、界面记录或命令。',
+        'tools.unavailable': '当前后台尚未提供历史工具开关，请先加载新版后台。',
+        'scope.loading': '正在读取 AFK 作用范围…', 'scope.error': '后台暂未提供 AFK 作用范围配置，请核对加载版本与读取权限；刚升级的后台可能需要经确认后重启。',
         'scope.legacy': '旧后台仍按会话运行，全局配置需加载新版后台。',
         'settings.enabled.global': '为当前 profile 的所有会话开启 AFK', 'settings.global': '全局 AFK 设置',
         'error.conflict': '配置已被其他位置更新，已载入最新值，请检查后重新修改并保存。',
@@ -149,6 +158,8 @@ window.__ModuleLoader__.load({
 `;
     /** @param {AfkSettings} view @returns {AfkSettings} */
     const settingsOf = view => ({ enabled: view.enabled, mode: view.mode, reply: view.reply });
+    /** @param {AfkPreferences} value @returns {Pick<AfkPreferences, 'scope' | 'toolsEnabled'>} */
+    const profileSettingsOf = value => ({ scope: value.scope, toolsEnabled: value.toolsEnabled });
     /** @param {unknown} reply @returns {reply is string} */
     const validReply = reply => typeof reply === 'string' && reply.trim().length > 0 && reply.length <= 2000;
     /** @param {unknown} error @param {Translate} t @returns {string} */
@@ -707,35 +718,41 @@ window.__ModuleLoader__.load({
         }
         /** @param {{ preferences: ReadyAfkPreferences, allowed: boolean }} props */
         function ScopeSettings({ preferences, allowed }) {
-          const [draft, setDraft] = React.useState(preferences.value.scope);
-          const [dirty, setDirty] = React.useState(false);
+          const [draft, setDraft] = React.useState(() => profileSettingsOf(preferences.value));
+          const [dirty, setDirty] = React.useState({ scope: false, toolsEnabled: false });
           const [saving, setSaving] = React.useState(false);
           const [error, setError] = React.useState('');
           const [saved, setSaved] = React.useState(false);
           const baseRevision = React.useRef(preferences.revision);
           const request = React.useRef(/** @type {AbortController | null} */ (null));
           const id = React.useId();
+          const toolsSupported = typeof preferences.value.toolsEnabled === 'boolean';
+          const changed = dirty.scope || (toolsSupported && dirty.toolsEnabled);
           React.useEffect(() => () => request.current?.abort(), []);
           React.useEffect(() => {
-            if (!dirty && baseRevision.current !== preferences.revision) {
+            if (!changed && baseRevision.current !== preferences.revision) {
               baseRevision.current = preferences.revision;
-              setDraft(preferences.value.scope); setSaved(false);
+              setDraft(profileSettingsOf(preferences.value)); setDirty({ scope: false, toolsEnabled: false }); setSaved(false);
             }
-          }, [dirty, preferences]);
+          }, [changed, preferences]);
           /** @param {React.FormEvent<HTMLFormElement>} event */
           async function save(event) {
             event.preventDefault();
-            if (!allowed || request.current) return;
+            if (!allowed || request.current || !changed) return;
+            /** @type {SettingsPathOpView[]} */
+            const ops = [];
+            if (dirty.scope) ops.push({ op: 'set', path: ['scope'], value: draft.scope });
+            if (toolsSupported && dirty.toolsEnabled) ops.push({ op: 'set', path: ['toolsEnabled'], value: draft.toolsEnabled });
             const controller = new AbortController();
             request.current = controller;
             setSaving(true); setError(''); setSaved(false);
             try {
-              const accepted = await preferencesForm.mutate([{ op: 'set', path: ['scope'], value: draft }], baseRevision.current);
+              const accepted = await preferencesForm.mutate(ops, baseRevision.current);
               const latest = preferencesForm.getSnapshot();
               if (!controller.signal.aborted) {
                 if (preferencesReady(latest)) {
                   baseRevision.current = latest.revision;
-                  setDraft(latest.value.scope); setDirty(false);
+                  setDraft(profileSettingsOf(latest.value)); setDirty({ scope: false, toolsEnabled: false });
                 }
                 requireAccepted(accepted);
                 setSaved(true);
@@ -743,20 +760,35 @@ window.__ModuleLoader__.load({
             } catch (failure) { if (!controller.signal.aborted) setError(failureText(failure, t)); }
             finally { if (!controller.signal.aborted) { request.current = null; setSaving(false); } }
           }
+          /** @param {Partial<Pick<AfkPreferences, 'scope' | 'toolsEnabled'>>} patch */
+          function change(patch) {
+            setDraft(previous => ({ ...previous, ...patch }));
+            setDirty(previous => ({ scope: previous.scope || patch.scope !== undefined,
+              toolsEnabled: previous.toolsEnabled || patch.toolsEnabled !== undefined }));
+            setSaved(false); setError('');
+          }
           return h('section', { className: 'dsh-afk-section' },
-            h('h3', null, t('scope.title')),
+            h('h3', null, t('settings.profile')),
             h('p', { className: 'dsh-afk-muted' }, t('scope.hint')),
             h('form', { onSubmit: save },
               h('label', { className: 'dsh-afk-label', htmlFor: id }, t('scope.title')),
-              h('select', { id, className: 'dsh-afk-select dsh-afk-scope-select', value: draft, disabled: !allowed || saving,
+              h('select', { id, className: 'dsh-afk-select dsh-afk-scope-select', value: draft.scope, disabled: !allowed || saving,
                 onChange: (/** @type {React.ChangeEvent<HTMLSelectElement>} */ event) => {
                    const value = event.target.value;
                    if (value !== 'session' && value !== 'global') return;
-                   setDraft(value); setDirty(true); setSaved(false); setError('');
+                   change({ scope: value });
                  } },
                 ['session', 'global'].map(value => h('option', { key: value, value }, t(value === 'session' ? 'scope.session' : 'scope.global')))),
-              draft === 'global' ? h('p', { className: 'dsh-afk-muted' }, t('scope.global.hint')) : null,
-              h('button', { type: 'submit', className: 'dsh-afk-button dsh-afk-primary', disabled: !allowed || saving || !dirty }, t(saving ? 'saving' : 'scope.apply')),
+              draft.scope === 'global' ? h('p', { className: 'dsh-afk-muted' }, t('scope.global.hint')) : null,
+              h('label', { className: 'dsh-afk-row' }, t('tools.label'),
+                h('input', { type: 'checkbox', checked: draft.toolsEnabled === true, disabled: !allowed || saving || !toolsSupported,
+                  'aria-describedby': `${id}-tools-hint`,
+                  onChange: (/** @type {React.ChangeEvent<HTMLInputElement>} */ event) => {
+                    if (toolsSupported) change({ toolsEnabled: event.target.checked });
+                  } })),
+              h('p', { id: `${id}-tools-hint`, className: 'dsh-afk-muted' }, t('tools.hint'),
+                !toolsSupported ? ` ${t('tools.unavailable')}` : ''),
+              h('button', { type: 'submit', className: 'dsh-afk-button dsh-afk-primary', disabled: !allowed || saving || !changed }, t(saving ? 'saving' : 'scope.apply')),
               !allowed ? h('p', { className: 'dsh-afk-error' }, t('forbidden')) : null,
               error ? h('p', { className: 'dsh-afk-error', role: 'alert' }, error) : null,
               saved ? h('p', { className: 'dsh-afk-success', role: 'status' }, t('saved')) : null));

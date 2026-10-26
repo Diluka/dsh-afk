@@ -79,8 +79,9 @@ export async function apply(ctx, config) {
     },
   });
 
-  // Read-only counterpart of the UI history action. The agent cannot enable AFK or change its reply.
-  ctx.tools.register({
+  // Optional counterparts of the UI history actions. The agent cannot change this setting.
+  /** @type {import('@deepseek-ai/dsh-tools').ToolDefinition[]} */
+  const historyTools = [{
     name: 'afk_history',
     description: 'Read this session’s question history, whether AFK was enabled or not, with recorded answers and outcomes. Returns newest-first pages; does not change settings or read status.',
     parameters: {
@@ -107,9 +108,7 @@ export async function apply(ctx, config) {
       return history(exec.agent, offset, limit, filter);
     },
     isConcurrencySafe: () => true,
-  });
-
-  ctx.tools.register({
+  }, {
     name: MARK_READ,
     description: 'Mark selected question-history records as read when the user asks to acknowledge them. Read items disappear from the default unread view but remain available with filter all.',
     parameters: {
@@ -131,6 +130,20 @@ export async function apply(ctx, config) {
       return markRead(exec.agent, args.recordIds);
     },
     isConcurrencySafe: () => true,
+  }];
+  /** @type {(() => void)[]} */
+  const toolDisposers = [];
+  const syncTools = () => {
+    const { toolsEnabled } = readConfig(config);
+    if (toolsEnabled === (toolDisposers.length > 0)) return;
+    for (const dispose of toolDisposers.splice(0)) dispose();
+    if (toolsEnabled) {
+      for (const definition of historyTools) toolDisposers.push(ctx.tools.register(definition));
+    }
+  };
+  syncTools();
+  ctx.effect(() => () => {
+    for (const dispose of toolDisposers.splice(0)) dispose();
   });
 
   // tools/execute runs only AFTER the existing pre-policy and monotonic guards.
@@ -207,6 +220,7 @@ export async function apply(ctx, config) {
   ctx.on('agent/created', async ({ agent }) => { await attach(agent); });
   // Loader dispatches this only to the owning fiber, after all volatile refs commit.
   ctx.on('loader/volatile-update', () => {
+    syncTools();
     for (const entry of agents.values()) entry.sync();
   });
   ctx.sessionProjections.onChanged((session, key) => {
@@ -228,7 +242,8 @@ export async function apply(ctx, config) {
       const { scope: afkScope, enabled, mode } = effective(agent);
       const snapshot = REQUEST_STATE_PREFIX + JSON.stringify({ scope: afkScope, enabled, mode });
       if (!enabled) return snapshot;
-      return `${snapshot}\nAFK is enabled (${afkScope} scope): the user is away. ${mode === 'disable-ask' ? 'ask_user_question is disabled. Make safe independent choices without asking the user.' : 'Ordinary ask_user_question calls receive the user-configured automatic reply, not a human answer.'} AFK never grants permission, approves a plan, or relaxes existing policies. Do not claim the human selected an option. If explicit authorization is necessary, preserve the pending decision and stop that dependent action; continue only independent authorized work. Previous AFK questions and actual replies can be read with afk_history.`;
+      const historyHint = readConfig(config).toolsEnabled ? ' Previous AFK questions and actual replies can be read with afk_history.' : '';
+      return `${snapshot}\nAFK is enabled (${afkScope} scope): the user is away. ${mode === 'disable-ask' ? 'ask_user_question is disabled. Make safe independent choices without asking the user.' : 'Ordinary ask_user_question calls receive the user-configured automatic reply, not a human answer.'} AFK never grants permission, approves a plan, or relaxes existing policies. Do not claim the human selected an option. If explicit authorization is necessary, preserve the pending decision and stop that dependent action; continue only independent authorized work.${historyHint}`;
     },
   });
 }

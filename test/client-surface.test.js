@@ -57,6 +57,7 @@ test('global preferences use the shared Settings form and global access, never a
   assert.match(source, /settingsMirror\.ensure\(\)/);
   assert.match(source, /preferencesForm\.mutate\(\[\{ op: 'set', path: \['global', 'enabled'\]/);
   assert.match(source, /useRemoteAccess\('settings\/mutate'\)/);
+  assert.match(source, /const globalAllowed = props\.useRemoteAccess\('settings\/mutate'\) && preferences\.writable/);
   assert.match(source, /function ScopeSettings\(/);
   assert.match(source, /disabled: \(!global && !view\) \|\| !writable \|\| saving/);
   assert.match(source, /baseRevision\.current/);

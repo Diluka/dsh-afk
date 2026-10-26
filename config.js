@@ -12,6 +12,7 @@ const defaults = { enabled: false, mode: 'auto-reply', reply: DEFAULT_REPLY };
 
 // Whole-object volatility makes enabled/mode/reply one committed snapshot.
 export const Config = Schema.object({
+  toolsEnabled: Schema.boolean().default(true).volatile(),
   scope: Schema.union(['session', 'global']).default('session').volatile(),
   global: Schema.object({
     enabled: Schema.boolean().default(false),
@@ -34,7 +35,7 @@ const current = value => value && typeof value === 'object' && 'get' in value &&
  * @returns {AfkPreferences}
  */
 export function readConfig(config = {}) {
-  return { scope: current(config.scope) ?? 'session', global: current(config.global) ?? defaults };
+  return { toolsEnabled: current(config.toolsEnabled) ?? true, scope: current(config.scope) ?? 'session', global: current(config.global) ?? defaults };
 }
 
 /**

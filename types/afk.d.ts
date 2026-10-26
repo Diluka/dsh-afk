@@ -60,6 +60,7 @@ export interface AfkReadReceipt {
   readIds: string[];
 }
 export interface AfkPreferences {
+  toolsEnabled: boolean;
   scope: AfkScope;
   global: AfkSettings;
 }
