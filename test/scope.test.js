@@ -20,10 +20,19 @@ test('Config uses stable volatile scope and one atomic global object with valida
   const refs = Config();
   assert.equal(typeof refs.scope.get, 'function');
   assert.equal(typeof refs.global.get, 'function');
+  assert.equal(typeof refs.toolsEnabled.get, 'function');
   assert.ok(Config.dict);
   assert.equal(Config.dict.scope.meta.volatile, true);
   assert.equal(Config.dict.global.meta.volatile, true);
-  assert.deepEqual(readConfig(refs), { scope: 'session', global: { enabled: false, mode: 'auto-reply', reply: DEFAULT_REPLY } });
+  assert.equal(Config.dict.toolsEnabled.meta.volatile, true);
+  assert.deepEqual(readConfig(refs), { toolsEnabled: true, scope: 'session', global: { enabled: false, mode: 'auto-reply', reply: DEFAULT_REPLY } });
+  assert.equal(readConfig().toolsEnabled, true, 'omitting the new setting preserves existing tools');
+  assert.equal(readConfig({ toolsEnabled: false }).toolsEnabled, false, 'plain false must not fall back to true');
+  assert.equal(readConfig(Config({ toolsEnabled: false })).toolsEnabled, false, 'live false must not fall back to true');
+  for (const toolsEnabled of ['false', 0, [], {}]) {
+    // @ts-expect-error 故意不合法：工具开关只接受布尔值，不接受字符串或其他类型。
+    assert.throws(() => Config({ toolsEnabled }));
+  }
   assert.equal(readConfig({ scope: 'global', global: { enabled: true, mode: 'auto-reply', reply: 'raw' } }).global.reply, 'raw');
   // The pure config resolver does not inspect a Session header; this fixture supplies no unrelated header fields.
   const local = projection.init(/** @type {import('@deepseek-ai/dsh-session').SessionHeader} */ (/** @type {unknown} */ ({})), /** @type {import('@deepseek-ai/dsh-session').SessionLogOffset} */ (0));
@@ -122,8 +131,9 @@ test('real volatile Settings persist atomically without remount; scope controls 
     const initial = document();
     assert.ok(initial, 'Settings must address the standard profile namespace, not include:dsh-afk');
     assert.ok(initial.value && typeof initial.value === 'object');
-    assert.deepEqual(Object.keys(initial.value).sort(), ['global', 'scope']);
-    assert.deepEqual(initial.value, { scope: 'session', global: { enabled: false, mode: 'auto-reply', reply: DEFAULT_REPLY } });
+    assert.deepEqual(Object.keys(initial.value).sort(), ['global', 'scope', 'toolsEnabled']);
+    assert.deepEqual(initial.value, { toolsEnabled: true, scope: 'session', global: { enabled: false, mode: 'auto-reply', reply: DEFAULT_REPLY } });
+    for (const name of ['afk_history', 'afk_mark_read']) assert.ok(ctx.tools.get(name, a), 'tools stay enabled by default');
     /** @param {import('@deepseek-ai/dsh-agent').Agent} agent @param {string} [input] */
     const command = async (agent, input = '') => {
       const execution = await ctx.commands.execute(agent, `/afk ${input}`, [], signal());
@@ -167,6 +177,7 @@ test('real volatile Settings persist atomically without remount; scope controls 
       const currentRefs = /** @type {ReturnType<typeof Config>} */ (/** @type {unknown} */ (fiber.config));
       assert.equal(currentRefs.scope, refs.scope, 'scope reference identity remains stable');
       assert.equal(currentRefs.global, refs.global, 'global reference identity remains stable');
+      assert.equal(currentRefs.toolsEnabled, refs.toolsEnabled, 'tool-toggle reference identity remains stable');
       return after;
     };
     assert.equal(entry.options.name, pluginPath, 'entry identity must match the persisted insertion');
@@ -264,7 +275,7 @@ test('real volatile Settings persist atomically without remount; scope controls 
     await assert.rejects(ctx.settings.mutate('dsh-afk', [{ op: 'set', path: ['global', 'enabled'], value: false }], activated.revision), error => error instanceof Error && 'code' in error && error.code === 'SETTINGS_CONFLICT');
     assert.equal(await readFile(patchPath, 'utf8'), beforeConflict);
     /** @type {[string[], unknown][]} */
-    const invalidEdits = [[['global', 'reply'], ' \n'], [['global', 'reply'], ''], [['global', 'reply'], 'x'.repeat(2001)], [['global', 'enabled'], 'yes'], [['global', 'mode'], 'approve-all'], [['scope'], 'all']];
+    const invalidEdits = [[['global', 'reply'], ' \n'], [['global', 'reply'], ''], [['global', 'reply'], 'x'.repeat(2001)], [['global', 'enabled'], 'yes'], [['global', 'mode'], 'approve-all'], [['scope'], 'all'], [['toolsEnabled'], 'false']];
     for (const [path, value] of invalidEdits) {
       await assert.rejects(ctx.settings.mutate('dsh-afk', [{ op: 'set', path, value }], revised.revision));
       assert.equal(await readFile(patchPath, 'utf8'), beforeConflict, 'invalid candidates roll back before persistence');
@@ -272,6 +283,49 @@ test('real volatile Settings persist atomically without remount; scope controls 
       assert.deepEqual(document().value, revised.value);
       assert.equal(entry.fiber, fiber);
     }
+    // Tools are a profile-wide option, independent of the AFK scope and policy.
+    const historyBeforeToggle = await success(b, 'history 0 50 all');
+    const toolsOff = await set([{ op: 'set', path: ['toolsEnabled'], value: false }]);
+    assert.equal(refs.toolsEnabled.get(), false);
+    assert.match(await readFile(patchPath, 'utf8'), /toolsEnabled: false/);
+    const withoutTools = await agentFor('scope-tools-off');
+    const toolsOffFork = await agentFor('scope-tools-off-fork', host.sessions.fork(a.session, undefined, /** @type {import('@deepseek-ai/dsh-session').SessionId} */ ('scope-tools-off-fork')));
+    for (const agent of [a, b, future, fork, restored, withoutTools, toolsOffFork]) {
+      assert.deepEqual(ctx.tools.schemas(agent).filter(tool => /^afk_/.test(tool.name)), [], 'closed tools are absent from model schemas');
+      for (const name of ['afk_history', 'afk_mark_read']) assert.equal(ctx.tools.get(name, agent), undefined);
+      const context = (await ctx.systemPrompt.assemble({ scope: agent })).contexts.find(row => row.name === 'dsh-afk');
+      assert.ok(context);
+      assert.doesNotMatch(context.text, /afk_history|afk_mark_read/, 'the prompt does not advertise unavailable tools');
+      assert.match(context.text, /never grants permission/, 'closing history tools does not weaken AFK safety context');
+    }
+    for (const name of ['afk_history', 'afk_mark_read']) {
+      assert.equal(ctx.tools.get(name), undefined, 'tools are unregistered, not only hidden from one agent');
+      const result = await ctx.tools.execute({ callId: /** @type {import('@deepseek-ai/dsh-llm').ToolCallId} */ (`disabled-${name}`), name, arguments: {}, agent: b, signal: signal() });
+      assert.equal(result.isError, true);
+      assert.equal(result.error?.info?.code, 'UNKNOWN_TOOL', 'a stale model call cannot execute a disabled tool');
+    }
+    assert.deepEqual(await success(b, 'history 0 50 all'), historyBeforeToggle, 'user commands can still read unchanged records');
+    assert.deepEqual(await ctx.afkHistory.history({ sessionId: b.session.id }, { offset: 0, limit: 50, filter: 'all' }, signal()), historyBeforeToggle, 'the UI history service remains available without model tools');
+    await assert.rejects(ctx.settings.mutate('dsh-afk', [{ op: 'set', path: ['toolsEnabled'], value: true }], revised.revision), error => error instanceof Error && 'code' in error && error.code === 'SETTINGS_CONFLICT');
+    assert.equal(document().revision, toolsOff.revision, 'the tool toggle requires a current Settings revision');
+    const replyWithoutTools = await runTool(b);
+    assert.equal(replyWithoutTools.isError, false);
+    assert.equal(replyWithoutTools.value.answers[0].custom, REPLY_PREFIX + 'Newest global reply.', 'AFK auto-replies still run while history tools are absent');
+    const historyWithoutTools = await success(b, 'history');
+    assert.equal(historyWithoutTools.totalAll, historyBeforeToggle.totalAll + 1, 'question recording continues');
+    await success(b, `read ${JSON.stringify([historyWithoutTools.records[0].id])}`);
+    assert.equal((await success(b, 'history')).unread, historyWithoutTools.unread - 1, 'the UI command can still mark records read');
+    await set([{ op: 'set', path: ['toolsEnabled'], value: true }]);
+    for (const agent of [a, b, future, fork, restored, withoutTools, toolsOffFork]) {
+      assert.deepEqual(ctx.tools.schemas(agent).filter(tool => /^afk_/.test(tool.name)).map(tool => tool.name).sort(), ['afk_history', 'afk_mark_read'], 'reopening adds exactly one copy of each tool');
+    }
+    const reopened = await runTool(b, 'afk_history', { filter: 'all' });
+    assert.equal(reopened.isError, false);
+    assert.equal(reopened.value.totalAll, historyWithoutTools.totalAll);
+    assert.equal((await runTool(b, 'afk_mark_read', { recordIds: [historyWithoutTools.records[0].id] })).isError, false);
+    const reopenedContext = (await ctx.systemPrompt.assemble({ scope: b })).contexts.find(row => row.name === 'dsh-afk');
+    assert.ok(reopenedContext);
+    assert.match(reopenedContext.text, /afk_history/);
     await set([{ op: 'set', path: ['global', 'mode'], value: 'disable-ask' }]);
     for (const agent of [a, b, future, fork, restored]) assert.equal(ctx.tools.get('ask_user_question', agent), undefined, 'mode commit refreshes every existing agent mask');
     const later = await agentFor('scope-later-disabled');
@@ -322,7 +376,12 @@ test('real volatile Settings persist atomically without remount; scope controls 
     assert.equal((await success(sessionFork)).enabled, false, 'a newly forked Session defaults off under default scope');
     assert.equal((await runTool(sessionFork)).isError, false);
     assert.equal(humanRequests, 2);
+    await set([{ op: 'set', path: ['toolsEnabled'], value: false }]);
+    assert.equal(ctx.tools.get('afk_history', a), undefined, 'the toggle also applies under per-session AFK settings');
+    assert.equal(ctx.tools.get('ask_user_question', a), undefined, 'the saved local disable-ask policy is unchanged');
+    assert.ok(ctx.tools.get('ask_user_question', sessionFork), 'the local off policy is unchanged');
     await set([{ op: 'set', path: ['scope'], value: 'global' }, { op: 'set', path: ['global'], value: { enabled: true, mode: 'disable-ask', reply: 'Persisted global policy.' } }]);
+    assert.equal(ctx.tools.get('afk_history', a), undefined, 'changing scope cannot reopen history tools');
     await tree.remove('dsh-afk');
     await ctx.loader.await();
     for (const agent of [a, b, future, fork, restored, later, sessionFork]) assert.ok(ctx.tools.get('ask_user_question', agent), 'unload releases masks on every agent');
@@ -360,6 +419,11 @@ test('real volatile Settings persist atomically without remount; scope controls 
       assert.equal(JSON.parse(current.result.text).reply, 'Persisted global policy.');
       assert.equal(JSON.parse(current.result.text).scope, 'global');
       assert.equal(next.tools.get('ask_user_question', fresh), undefined);
+      assert.equal(next.tools.get('afk_history'), undefined, 'persisted false starts without registering history tools');
+      assert.equal(next.tools.get('afk_mark_read', fresh), undefined);
+      const freshContext = (await next.systemPrompt.assemble({ scope: fresh })).contexts.find(row => row.name === 'dsh-afk');
+      assert.ok(freshContext);
+      assert.doesNotMatch(freshContext.text, /afk_history|afk_mark_read/);
     } finally {
       await nextRegistration?.();
       await nextScope?.dispose();

@@ -1,4 +1,5 @@
 packages:
+  - test/runtimes/alpha3
   - test/runtimes/rc2
 
 autoInstallPeers: false
@@ -8,7 +9,7 @@ hoistPattern:
   - '*'
   - '!@deepseek-ai/dsh-*'
 
-# Keep the projection declaration's Zod identity aligned with our schema library.
-# The tested Host uses the same Zod 4 API; two minor-version type identities conflict.
+# Align the current SDK declarations without replacing the oldest SDK's real provider.
 overrides:
-  '@deepseek-ai/dsh-session-projection>zod': 4.6.7
+  '@deepseek-ai/dsh-session-projection@0.2.1-rc.2>zod': 4.6.7
+  '@deepseek-ai/dsh-session-projection@0.2.1-rc.3>zod': 4.6.7

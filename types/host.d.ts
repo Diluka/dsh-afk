@@ -36,6 +36,7 @@ export type LiveConfigValue<T> = T | Pick<ReturnType<Schemastery<T, T, 'volatile
 export type LiveConfigSnapshot<T> = ReturnType<ReturnType<Schemastery<T, T, 'volatile-defined'>>['get']>;
 /** Plugin-owned config accepts Loader live references or plain programmatic values. */
 export type AfkConfigInput = Partial<{
+  toolsEnabled: LiveConfigValue<boolean>;
   scope: LiveConfigValue<AfkScope>;
   global: LiveConfigValue<AfkSettings>;
 }>;

@@ -20,12 +20,12 @@
 
 ## 环境与依赖
 
-- 兼容目标以 [package.json](./package.json) 的 `engines` 为准；当前为 Node.js 22+、DSH 0.2.1-rc.2 和 0.2.1-rc.3。pnpm 版本由 `packageManager` 固定。
+- 兼容目标以 [package.json](./package.json) 的 `engines` 为准；当前为 Node.js 22+、DSH `>=0.2.1-alpha.3 <=0.2.1-rc.3`。采用边界验证和中间发行 API 差异核对，不逐版穷举。pnpm 版本由 `packageManager` 固定。
 - 宿主已有的公共库优先使用必需 `peerDependencies`，开发与 CI 在 `devDependencies` 精确固定同版；不要引入普通生产依赖的重复副本。
-- 当前公共 peer 为 Zod 4.6.7、Schemastery 3.18.5、Typert Protocol `0.2.1-rc.2 || 0.2.1-rc.3`；根开发 SDK 精确固定 rc.3，旧版集成夹具 [rc2](./test/runtimes/rc2/package.json) 精确固定 rc.2，两者共用冻结锁文件。保留 [pnpm-workspace.yaml](./pnpm-workspace.yaml) 的 `autoInstallPeers: false`，缺失时不要靠自动选版掩盖问题，也不要把必需 peer 标为 optional。
+- 当前公共 peer 为 Zod `4.4.3 || 4.6.7`、Schemastery `3.18.5-alpha.2 || 3.18.5`、Typert Protocol `>=0.2.1-alpha.3 <=0.2.1-rc.3`；根开发 SDK 精确固定 rc.3，[最低版本夹具](./test/runtimes/alpha3/package.json) 保留 alpha.3 与原始框架/Zod provider，[上一发行夹具](./test/runtimes/rc2/package.json) 固定 rc.2，三者共用冻结锁文件。保留 [pnpm-workspace.yaml](./pnpm-workspace.yaml) 的 `autoInstallPeers: false`，缺失时不要靠自动选版掩盖问题，也不要把必需 peer 标为 optional。
 - peer 是兼容声明，不是自动运行时保护。改版本前核对实际宿主及其解析契约，验证生产副本确实使用宿主同一 provider。
 - React 从宿主模块表获取，其他 Client 能力通过 Service 注入；不要为了 JSDoc 新增跨插件运行时导入。
-- SDK 投影声明的 Zod minor 类型身份通过定向 override 对齐；修改该 override 时同时验证类型和实际运行行为，不全局覆盖未知依赖。双版本 SDK 使用 `hoistPattern` 排除 `@deepseek-ai/dsh-*` 的共享提升，避免未声明的 SDK 类型导入误取另一版本；保留其他包的默认提升供原生加载器使用。增量升级和干净安装都必须通过类型检查，不能只验证全新 worktree。
+- SDK 投影声明的 Zod minor 类型身份通过定向 override 对齐；修改该 override 时同时验证类型和实际运行行为，不全局覆盖未知依赖。多版本 SDK 使用 `hoistPattern` 排除 `@deepseek-ai/dsh-*` 的共享提升，避免未声明的 SDK 类型导入误取另一版本；保留其他包的默认提升供原生加载器使用。增量升级和干净安装都必须通过类型检查，不能只验证全新 worktree。
 
 ## DSH 升级与历史版本支持策略
 
@@ -91,7 +91,7 @@ dsh plugin --profile web add "link:$PWD"
 /afk read ["历史列表返回的记录 ID"]
 ```
 
-`/afk` 查询当前有效设置和 scope；history/read 始终只操作当前会话。Agent 工具仅有 `afk_history({offset?, limit?, filter?})` 与用户要求确认时使用的 `afk_mark_read({recordIds:[...]})`：filter 默认 unread，limit 为1–50，单纯读取不自动标记。不要新增 Agent 可用的开关、配置修改或批准权限工具。
+`/afk` 查询当前有效设置和 scope；history/read 始终只操作当前会话。Agent 工具仅有 `afk_history({offset?, limit?, filter?})` 与用户要求确认时使用的 `afk_mark_read({recordIds:[...]})`：filter 默认 unread，limit 为1–50，单纯读取不自动标记。顶层 volatile 配置 `toolsEnabled` 默认 `true`，在当前 profile 统一控制这两个工具的注册；关闭时撤销注册并移除提示词中的工具指引，不影响 AFK 策略、记录、UI Remote 或用户命令。该设置走标准 Settings 权限与 revision/CAS，不受 AFK scope 影响。不要新增 Agent 可用的开关、配置修改或批准权限工具。
 
 回复为1–2000字符的非空白文本，配置原文不截断/trim，发送时另加固定 AFK 标识。旧记录必须保留当时实际回复。记录与本地设置沿宿主 Session 的保留周期；不将尚未刷盘时的异常断电视为持久性保证，也不把全局配置删除与删除某个 Session 混为一谈。
 
@@ -111,9 +111,10 @@ pnpm run check
 pnpm run typecheck
 DSH_TEST_RUNTIME_DIR="$PWD" DSH_TEST_RUNTIME_VERSION=0.2.1-rc.3 pnpm run test:runtime
 DSH_TEST_RUNTIME_DIR="$PWD/test/runtimes/rc2" DSH_TEST_RUNTIME_VERSION=0.2.1-rc.2 pnpm run test:runtime
+DSH_TEST_RUNTIME_DIR="$PWD/test/runtimes/alpha3" DSH_TEST_RUNTIME_VERSION=0.2.1-alpha.3 pnpm run test:runtime
 ```
 
-- `DSH_TEST_RUNTIME_DIR="$PWD"` 使用锁定 rc.3 开发 SDK；`test/runtimes/rc2` 使用旧版基线。两版均须运行全部真实框架隔离测试；`DSH_TEST_RUNTIME_VERSION` 防止误用祖先目录提供的另一版 SDK。不启动服务器、不调用模型、不读写用户 profile。
+- `DSH_TEST_RUNTIME_DIR="$PWD"` 使用锁定 rc.3 开发 SDK；`test/runtimes/alpha3` 使用最低支持版本及原始 provider，`test/runtimes/rc2` 保留上一发行回归。三组均须运行全部真实框架隔离测试；`DSH_TEST_RUNTIME_VERSION` 防止误用祖先目录提供的另一版 SDK。不启动服务器、不调用模型、不读写用户 profile。
 - 也可将该变量设为另一个已确认 DSH 安装的绝对目录。仅运行 `pnpm test` 时部分集成检查会 skipped，必须如实报告，不能当完整通过。
 - [运行时测试入口](./scripts/test-runtime.js) 将源码或最终制品的运行文件复制到无自身 node_modules 的临时 payload，其父级仅提供所选真实 SDK 的公共 peer，完整功能测试不得回落到根开发 SDK 的另一版 peer；临时夹具在退出时清理，不修改 SDK 安装。[peer 测试](./test/peers.test.js) 同时检查功能 payload 的真实路径和 ESM 类身份，并另用真实宿主解析器验证普通安装与外部 link 的生产 provider；别用原位开发依赖或只导入模块掩盖完整功能链中的混版。
 - formatter VM/源码结构检查不等于 React 或 GUI 测试。UI 变化须在真实宿主检查交互、主题、键盘/焦点和错误状态，并恢复改动的用户设置、归档测试会话、关闭测试浏览器。
@@ -135,7 +136,7 @@ DSH_TEST_PLUGIN_DIR="$pack_dir/unpacked/package" pnpm run test:runtime
 
 [分发清单](./package.json) 必须包含运行 JS 引用的生产声明文件；不打包测试声明、编译负例、SDK 开发依赖或本机产物。原创图标和中英文元数据随包分发。
 
-[CI](./.github/workflows/ci.yml) 在 push、PR、手动触发时运行 Node 22/24 × DSH rc.2/rc.3 矩阵的冻结锁安装、语法、类型、源码集成、打包与制品集成检查；类型检查使用根目录 rc.3 SDK，两版均执行真实运行时集成。保持：
+[CI](./.github/workflows/ci.yml) 在 push、PR、手动触发时运行 Node 22/24 × DSH alpha.3/rc.2/rc.3 矩阵的冻结锁安装、语法、类型、源码集成、打包与制品集成检查；类型检查使用根目录 rc.3 SDK，三个代表版本均执行真实运行时集成。保持：
 
 - 依赖脚本禁用、Actions 固定完整 SHA、`contents: read`、checkout 不保留凭据；无自动发布或部署。
 - Bash `pipefail` 保证 `node --test | tee` 不吞失败；任何 skipped 检查使 CI 失败。
