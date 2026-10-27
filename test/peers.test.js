@@ -122,16 +122,16 @@ test('the selected real SDK uses one supported DSH release throughout its declar
   // Workspace SDK fixtures, in contrast, intentionally provide their SDKs as devDependencies.
   const dependencies = record(manifest.dependencies ?? manifest.devDependencies ?? {});
   const expectedZodByFixture = new Map([
-    ['dsh-afk', '4.6.7'], ['dsh-afk-runtime-alpha3', '4.4.3'], ['dsh-afk-runtime-rc2', '4.6.7'],
-    ['dsh-afk-runtime-rc3', '4.6.7'], ['dsh-afk-runtime-rc4-zod443', '4.4.3'],
+    ['dsh-afk', '4.6.7'], ['dsh-afk-runtime-alpha3', '4.4.3'],
+    ['dsh-afk-runtime-rc2', '4.4.3'], ['dsh-afk-runtime-rc4-zod443', '4.4.3'],
   ]);
   const expectedZod = typeof manifest.name === 'string' ? expectedZodByFixture.get(manifest.name) : undefined;
   const actualZod = (await manifestOf(runtimeRequire.resolve('zod/package.json'))).version;
   if (expectedZod) assert.equal(actualZod, expectedZod, 'the selected fixture must exercise its intended Zod provider');
   if (process.env.DSH_TEST_ZOD_VERSION) assert.equal(actualZod, process.env.DSH_TEST_ZOD_VERSION, 'the selected Host must exercise the requested Zod version');
   const expectedSchemaByFixture = new Map([
-    ['dsh-afk', '3.18.5'], ['dsh-afk-runtime-alpha3', '3.18.5-alpha.2'], ['dsh-afk-runtime-rc2', '3.18.5'],
-    ['dsh-afk-runtime-rc3', '3.18.5'], ['dsh-afk-runtime-rc4-zod443', '3.18.5'],
+    ['dsh-afk', '3.18.5'], ['dsh-afk-runtime-alpha3', '3.18.5-alpha.2'],
+    ['dsh-afk-runtime-rc2', '3.18.5'], ['dsh-afk-runtime-rc4-zod443', '3.18.5'],
   ]);
   const expectedSchema = typeof manifest.name === 'string' ? expectedSchemaByFixture.get(manifest.name) : undefined;
   const actualSchema = (await manifestOf(runtimeRequire.resolve('@deepseek-ai/schemastery/package.json'))).version;

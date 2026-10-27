@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   check:
-    name: Node ${{ matrix.node }} / DSH ${{ matrix.dsh.version }} (${{ matrix.dsh.directory }})
+    name: Node ${{ matrix.node }} / DSH ${{ matrix.dsh.version }} (${{ matrix.dsh.role }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -26,19 +26,20 @@ jobs:
       matrix:
         node: ['22.x', '24.x']
         dsh:
-          - version: '0.2.1-alpha.3'
+          - role: 'minimum'
+            version: '0.2.1-alpha.3'
             directory: 'test/runtimes/alpha3'
             zod: '4.4.3'
-          - version: '0.2.1-rc.2'
+          - role: 'latest'
+            version: '0.2.1-rc.2'
             directory: 'test/runtimes/rc2'
-            zod: '4.6.7'
-          - version: '0.2.1-rc.3'
-            directory: 'test/runtimes/rc3'
-            zod: '4.6.7'
-          - version: '0.2.1-rc.4'
+            zod: '4.4.3'
+          - role: 'next'
+            version: '0.2.1-rc.4'
             directory: '.'
             zod: '4.6.7'
-          - version: '0.2.1-rc.4'
+          - role: 'next-zod-4.4.3'
+            version: '0.2.1-rc.4'
             directory: 'test/runtimes/rc4-zod443'
             zod: '4.4.3'
     steps:

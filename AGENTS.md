@@ -33,7 +33,7 @@
 - 历史版本提供有限支持：原则上至少支持目标版本的上一个历史发行版本。若其 API 已无法简单支撑当前功能，则明确停止支持；不为保留历史版本引入复杂桥接、成套分叉或额外兼容层。更早版本同样遵循这一成本边界。
 - 跨 `0.x` 版本线升级（如 `0.2.x` → `0.3.x`）时，需要历史兼容适配的范围尽量收敛到上一条版本线的最后一个小版本，不逐个回补该版本线的早期发行。
 - API 完全兼容、无需额外适配的版本，不因年代久远而移除已声明的支持；上一条版本线的收敛原则不用于机械删除这类兼容版本。保留或停止支持均须依据实际契约与验证证据，并同步 [package.json](./package.json)、锁文件及用户说明。
-- E2E 测试矩阵必须包含最新目标版本，以及有代表性的、仍受支持的历史版本；优先覆盖上一历史版本、上一条受支持 `0.x` 版本线的最后一个小版本，以及实际存在 API 差异的版本，不必穷举 API 相同的所有旧发行。真实 SDK 隔离集成、打包验证与 GUI E2E 分别记录；前两者不能冒充 E2E，未执行的覆盖须明确说明。
+- 连续受支持版本区间的 SDK 集成和 GUI E2E 矩阵覆盖最低和最高版本，并分别覆盖解析后的 `latest`、`next`；存在 API、provider 或平台差异时补测代表性组合。端点通过不等于逐版验证；真实 SDK 隔离集成、打包验证与 GUI E2E 分别记录，前两者不能冒充 GUI E2E，未执行的覆盖须明确说明。
 
 ## 本地准备与链接安装
 
@@ -111,7 +111,6 @@ pnpm run check
 pnpm run typecheck
 DSH_TEST_RUNTIME_DIR="$PWD" DSH_TEST_RUNTIME_VERSION=0.2.1-rc.4 pnpm run test:runtime
 DSH_TEST_RUNTIME_DIR="$PWD/test/runtimes/rc4-zod443" DSH_TEST_RUNTIME_VERSION=0.2.1-rc.4 pnpm run test:runtime
-DSH_TEST_RUNTIME_DIR="$PWD/test/runtimes/rc3" DSH_TEST_RUNTIME_VERSION=0.2.1-rc.3 pnpm run test:runtime
 DSH_TEST_RUNTIME_DIR="$PWD/test/runtimes/rc2" DSH_TEST_RUNTIME_VERSION=0.2.1-rc.2 pnpm run test:runtime
 DSH_TEST_RUNTIME_DIR="$PWD/test/runtimes/alpha3" DSH_TEST_RUNTIME_VERSION=0.2.1-alpha.3 pnpm run test:runtime
 ```
