@@ -1,9 +1,8 @@
 /// <reference path="./types/client.d.ts" />
 /** @import { AfkSettings, AfkQuestion, AfkHistory, AfkView, AfkPreferences } from './types/afk.js' */
-/** @import { AfkToolbarSlotProps, AfkBundleConfigProps, AfkCommandViewProps, AfkPreferencesSnapshot, ReadyAfkPreferences, LegacyProof, HistoryLoadState, HistoryRecordView, HistoryPage, CommandSummary } from './types/client.js' */
+/** @import { AfkToolbarSlotProps, AfkBundleConfigProps, AfkCommandViewProps, AfkPreferencesSnapshot, ReadyAfkPreferences, HistoryLoadState, HistoryRecordView, HistoryPage, CommandSummary } from './types/client.js' */
 /** @import { Translate, GlobalStandardProps } from '@deepseek-ai/dsh-client-ui-slots' */
 /** @import { CommandNode } from '@deepseek-ai/dsh-client-ui-conversation/client' */
-/** @import { CommandResult } from '@deepseek-ai/dsh-commands/types' */
 /** @import { SessionId } from '@deepseek-ai/dsh-session/types' */
 /** @import { SessionBinding, SessionReference } from '@deepseek-ai/dsh-api-session-controller/client' */
 /** @import { ConfigForm } from '@deepseek-ai/dsh-client-ui-settings/client' */
@@ -24,9 +23,7 @@ window.__ModuleLoader__.load({
         'scope.apply': 'Apply settings', 'settings.profile': 'Profile settings',
         'tools.label': 'Provide history tools to the Agent',
         'tools.hint': 'Controls afk_history and afk_mark_read for this profile, independently of AFK scope. Turning this off does not affect automatic AFK replies, history in the UI, or commands.',
-        'tools.unavailable': 'This Host version does not expose the history-tool switch.',
         'scope.loading': 'Loading AFK scope…', 'scope.error': 'The Host has not exposed AFK scope settings. Check the loaded version and read access; an upgraded Host may need an approved restart.',
-        'scope.legacy': 'The previous Host is still running in per-session mode. Global settings need the upgraded Host.',
         'settings.enabled.global': 'Enable AFK for every session in this profile', 'settings.global': 'Shared AFK settings',
         'error.conflict': 'Settings changed elsewhere. Latest values were loaded; review and try again.',
         'settings.session': 'Session', 'settings.choose': 'Choose a session',
@@ -42,10 +39,9 @@ window.__ModuleLoader__.load({
         save: 'Save settings', saving: 'Saving…', saved: 'Settings saved.', loading: 'Loading session…',
         unavailable: 'AFK state is not available yet.', forbidden: 'This connection cannot perform this operation.',
         'error.generic': 'The AFK operation failed. Please try again.', 'error.command': 'The AFK command is unavailable.',
-        'error.history': 'The server returned invalid AFK history.',
         'command.running': 'Working…', 'command.done': 'Done', 'command.failed': 'Operation failed',
         'command.read': 'Marked read', 'command.history': 'History: {unread} unread / {total} total',
-        'command.history.total': 'History: {total} batches', 'command.on': 'Enabled', 'command.off': 'Disabled',
+        'command.on': 'Enabled', 'command.off': 'Disabled',
         'history.title': 'Question history', 'history.count': '{total} batches', 'history.open': 'History', 'history.close': 'Close',
         'history.hint': 'Newest first. Each batch is one question-tool call and may contain multiple questions.',
         'history.loading': 'Loading history…', 'history.empty': 'No questions recorded in this session.',
@@ -66,9 +62,7 @@ window.__ModuleLoader__.load({
         'scope.apply': '应用设置', 'settings.profile': '当前 profile 配置',
         'tools.label': '向 Agent 提供历史工具',
         'tools.hint': '统一控制当前 profile 是否向模型提供 afk_history 和 afk_mark_read，不随 AFK 作用范围切换。关闭不影响 AFK 自动应答、界面记录或命令。',
-        'tools.unavailable': '当前后台尚未提供历史工具开关，请先加载新版后台。',
         'scope.loading': '正在读取 AFK 作用范围…', 'scope.error': '后台暂未提供 AFK 作用范围配置，请核对加载版本与读取权限；刚升级的后台可能需要经确认后重启。',
-        'scope.legacy': '旧后台仍按会话运行，全局配置需加载新版后台。',
         'settings.enabled.global': '为当前 profile 的所有会话开启 AFK', 'settings.global': '全局 AFK 设置',
         'error.conflict': '配置已被其他位置更新，已载入最新值，请检查后重新修改并保存。',
         'settings.session': '目标会话', 'settings.choose': '请选择要配置的会话',
@@ -84,10 +78,9 @@ window.__ModuleLoader__.load({
         save: '保存设置', saving: '正在保存…', saved: '设置已保存。', loading: '正在读取会话…',
         unavailable: 'AFK 状态尚不可用。', forbidden: '当前连接没有此操作的执行权限。',
         'error.generic': 'AFK 操作失败，请重试。', 'error.command': '当前会话的 AFK 命令不可用。',
-        'error.history': '服务端返回了无效的 AFK 记录。',
         'command.running': '正在处理…', 'command.done': '操作已完成', 'command.failed': '操作失败',
         'command.read': '已标记为已读', 'command.history': '记录：未读 {unread} 批 / 共 {total} 批',
-        'command.history.total': '记录：共 {total} 批', 'command.on': '已开启', 'command.off': '已关闭',
+        'command.on': '已开启', 'command.off': '已关闭',
         'history.title': '提问记录', 'history.count': '{total} 批', 'history.open': '记录', 'history.close': '关闭',
         'history.hint': '最新优先；每批对应一次提问工具调用，可能包含多个问题。',
         'history.loading': '正在读取记录…', 'history.empty': '当前会话还没有提问记录。',
@@ -165,17 +158,10 @@ window.__ModuleLoader__.load({
     /** @param {unknown} error @param {Translate} t @returns {string} */
     const failureText = (error, t) => error && typeof error === 'object' && 'message' in error
       && typeof error.message === 'string' && error.message ? error.message : t('error.generic');
-    const emptySource = { subscribe: () => () => {}, getSnapshot: () => undefined };
 
     /** @param {unknown} value @returns {value is Record<string, unknown>} */
     function isObject(value) {
       return value !== null && typeof value === 'object' && !Array.isArray(value);
-    }
-
-    /** @param {unknown} value @returns {value is AfkSettings} */
-    function isAfkSettings(value) {
-      return isObject(value) && typeof value.enabled === 'boolean'
-        && (value.mode === 'auto-reply' || value.mode === 'disable-ask') && typeof value.reply === 'string';
     }
 
     /** @param {unknown} value @returns {value is AfkQuestion} */
@@ -275,32 +261,39 @@ window.__ModuleLoader__.load({
       /** @type {unknown} */
       let decoded;
       try { decoded = JSON.parse(raw); } catch {}
+      /** @type {Record<string, unknown>} */
+      const data = /** @type {Record<string, unknown>} */ (
+        decoded && typeof decoded === 'object' && !Array.isArray(decoded) ? decoded : {});
       /** @param {unknown} value @returns {value is number} */
       const count = value => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
-      if (decoded && typeof decoded === 'object' && !Array.isArray(decoded)) {
-        const data = /** @type {Record<string, unknown>} */ (decoded);
-        if (data.type === 'dsh-afk/read-v1' && Array.isArray(data.readIds)) {
-          return { state: 'success', text: t('command.read') };
-        }
-        if (count(data.totalAll) && count(data.unread)) {
-          return { state: 'success', text: t('command.history', { total: data.totalAll, unread: data.unread }), hidden: true };
-        }
-        if (count(data.total) && Array.isArray(data.records)) {
-          return { state: 'success', text: t('command.history.total', { total: data.total }), hidden: true };
-        }
-        const settings = data.type === 'dsh-afk/settings-v1' ? data.settings : data;
-        if (settings && typeof settings === 'object' && 'enabled' in settings && typeof settings.enabled === 'boolean'
-          && 'mode' in settings && (settings.mode === 'auto-reply' || settings.mode === 'disable-ask')) {
-          const scope = data.type === 'dsh-afk/settings-v1' ? 'session' : data.scope ?? 'session';
-          const parts = [t(settings.enabled ? 'command.on' : 'command.off')];
-          if (scope === 'session' || scope === 'global') parts.push(t(scope === 'global' ? 'scope.global' : 'scope.session'));
-          parts.push(t(settings.mode === 'auto-reply' ? 'mode.auto' : 'mode.disable'));
-          return { state: 'success', text: parts.join(' · ') };
-        }
+      /** @param {unknown} value @returns {value is { enabled: boolean, mode: string }} */
+      const settingsLike = value => value !== null && typeof value === 'object'
+        && typeof (/** @type {Record<string, unknown>} */ (value)).enabled === 'boolean'
+        && ((/** @type {Record<string, unknown>} */ (value)).mode === 'auto-reply'
+          || (/** @type {Record<string, unknown>} */ (value)).mode === 'disable-ask');
+      /** @param {{ enabled: boolean, mode: string }} settings @param {string} scope */
+      const settingText = (settings, scope) => [
+        t(settings.enabled ? 'command.on' : 'command.off'),
+        t(scope === 'global' ? 'scope.global' : 'scope.session'),
+        t(settings.mode === 'auto-reply' ? 'mode.auto' : 'mode.disable'),
+      ].join(' · ');
+      if (data.type === 'dsh-afk/read-v1' && Array.isArray(data.readIds)) {
+        return { state: 'success', text: t('command.read') };
       }
-      // Unknown/malformed machine payloads are never dumped into Chat.
-      const plain = decoded === undefined && !/^[{[]/.test(raw) ? raw.replace(/\s+/g, ' ').slice(0, 240) : '';
-      return { state: 'success', text: plain || t('command.done') };
+      if (count(data.totalAll) && count(data.unread)) {
+        return { state: 'success', text: t('command.history', { total: data.totalAll, unread: data.unread }), hidden: true };
+      }
+      // Session commands commit a typed settings receipt; their scope is always the session.
+      if (data.type === 'dsh-afk/settings-v1' && settingsLike(data.settings)) {
+        return { state: 'success', text: settingText(data.settings, 'session') };
+      }
+      // `/afk` answers the effective status view, whose same-version shape carries the scope.
+      const scope = data.scope;
+      if ((scope === 'session' || scope === 'global') && settingsLike(data)) {
+        return { state: 'success', text: settingText(data, scope) };
+      }
+      // Unknown or malformed machine payloads become a generic completion; JSON is never dumped into Chat.
+      return { state: 'success', text: t('command.done') };
     }
 
     /**
@@ -371,35 +364,15 @@ window.__ModuleLoader__.load({
         function usePreferences() {
           const snapshot = React.useSyncExternalStore(subscribePreferences, preferencesSnapshot, preferencesSnapshot);
           const mirror = React.useSyncExternalStore(subscribeMirror, mirrorSnapshot, mirrorSnapshot);
-          React.useEffect(() => { void settingsMirror.ensure(); }, []);
+          // ConfigForms.get() already calls mirror.ensure(), and the settings provider
+          // re-reads on connection/reset and document-updated; no per-mount refresh here.
           return React.useMemo(() => !mirror.view && mirror.error
             ? { ...snapshot, status: 'unavailable' } : snapshot, [snapshot, mirror]);
         }
         /** @param {AfkPreferencesSnapshot} snapshot @returns {snapshot is ReadyAfkPreferences} */
-        const preferencesReady = snapshot => Boolean(snapshot.status === 'ready' && snapshot.value
-          && ['session', 'global'].includes(snapshot.value.scope) && snapshot.value.global
-          && typeof snapshot.revision === 'number' && Number.isSafeInteger(snapshot.revision) && snapshot.revision >= 0);
+        const preferencesReady = snapshot => snapshot.status === 'ready' && Boolean(snapshot.value?.global);
         /** @param {boolean} accepted */
         const requireAccepted = accepted => { if (!accepted) throw new Error(t('error.conflict')); };
-        /** @param {Extract<CommandResult, { kind: 'success' }>} result */
-        const legacyStatus = result => {
-          if (typeof result.text !== 'string') return false;
-          /** @type {unknown} */
-          const status = JSON.parse(result.text);
-          return Boolean(isObject(status) && !Object.hasOwn(status, 'scope') && typeof status.enabled === 'boolean'
-            && (status.mode === 'auto-reply' || status.mode === 'disable-ask') && validReply(status.reply));
-        };
-        let connectionEpoch = 0;
-        /** @type {Set<() => void>} */
-        const connectionListeners = new Set();
-        const connectionSnapshot = () => connectionEpoch;
-        /** @param {() => void} listener */
-        const subscribeConnection = listener => { connectionListeners.add(listener); return () => { connectionListeners.delete(listener); }; };
-        ctx.on('connection/reset', () => {
-          connectionEpoch++;
-          for (const listener of connectionListeners) listener();
-        });
-        ctx.effect(() => () => connectionListeners.clear());
 
         /** @param {SessionId} sessionId @param {string} line @param {AbortSignal} signal */
         async function execute(sessionId, line, signal) {
@@ -413,8 +386,8 @@ window.__ModuleLoader__.load({
         /** @param {SessionId} sessionId @param {import('./types/history.js').HistoryQuery} query @param {AbortSignal} signal */
         async function queryHistory(sessionId, query, signal) {
           if (!historyRemote) throw new Error(t('unavailable'));
-          parseHistorySessionId(sessionId);
-          const result = await historyRemote.history(sessionId, parseHistoryQuery(query), signal);
+          // The Remote descriptor's strict codecs parse both named wire values.
+          const result = await historyRemote.history(sessionId, query, signal);
           if (!result.ok) throw new Error(result.error.message);
           return result.value;
         }
@@ -438,61 +411,33 @@ window.__ModuleLoader__.load({
           const preferences = usePreferences();
           const ready = preferencesReady(preferences);
           const global = ready && preferences.value.scope === 'global';
-          const [legacyProof, setLegacyProof] = React.useState(/** @type {LegacyProof | null} */ (null));
-          const epoch = React.useSyncExternalStore(subscribeConnection, connectionSnapshot, connectionSnapshot);
-          const legacy = preferences.status === 'unavailable' && legacyProof?.snapshot === preferences
-            && legacyProof.epoch === epoch && legacyProof.legacy;
           const effective = global ? preferences.value.global : view;
-          const writable = legacy ? allowed : ready && (global ? globalAllowed && preferences.writable : allowed);
-          React.useEffect(() => {
-            if (preferences.status !== 'unavailable' || !view || !allowed) return;
-            const controller = new AbortController();
-            let active = true;
-            // A rolling upgrade can serve the new Client before the previous Host is evicted.
-            // Only a read-only, typed legacy response permits local writes; a missing form alone never does.
-            execute(sessionId, '/afk', controller.signal).then(result => {
-              if (active) setLegacyProof({ snapshot: preferences, epoch, legacy: legacyStatus(result) });
-            }).catch(() => { if (active) setLegacyProof({ snapshot: preferences, epoch, legacy: false }); });
-            return () => { active = false; controller.abort(); };
-          }, [preferences, sessionId, allowed, Boolean(view), epoch]);
+          const writable = ready && (global ? globalAllowed && preferences.writable : allowed);
           const [historyOpen, setHistoryOpen] = React.useState(false);
           const [saving, setSaving] = React.useState(false);
           const [error, setError] = React.useState('');
           const request = React.useRef(/** @type {AbortController | null} */ (null));
-          React.useEffect(() => {
-            setSaving(false);
-            return () => { request.current?.abort(); request.current = null; };
-          }, [epoch]);
+          React.useEffect(() => () => { request.current?.abort(); request.current = null; }, []);
           /** @param {boolean} enabled */
           async function toggle(enabled) {
-            if ((!global && !view) || !writable || request.current || connectionSnapshot() !== epoch) return;
+            if ((!global && !view) || !writable || request.current) return;
             const controller = new AbortController();
             request.current = controller;
             setSaving(true); setError('');
-            const stillCurrent = () => !controller.signal.aborted && connectionSnapshot() === epoch;
             try {
               if (global) {
                 requireAccepted(await preferencesForm.mutate([{ op: 'set', path: ['global', 'enabled'], value: enabled }], preferences.revision));
               } else {
                 if (!view) return;
-                if (legacy) {
-                  const status = await execute(sessionId, '/afk', controller.signal);
-                  if (!stillCurrent()) return;
-                  if (!legacyStatus(status)) {
-                    setLegacyProof(null);
-                    throw new Error(t('scope.error'));
-                  }
-                }
-                if (!stillCurrent()) return;
                 await execute(sessionId, `/afk set ${JSON.stringify({ ...settingsOf(view), enabled })}`, controller.signal);
               }
-            } catch (failure) { if (stillCurrent()) setError(failureText(failure, t)); }
-            finally { if (stillCurrent()) { request.current = null; setSaving(false); } }
+            } catch (failure) { if (!controller.signal.aborted) setError(failureText(failure, t)); }
+            finally { if (!controller.signal.aborted) { request.current = null; setSaving(false); } }
           }
           return h('div', { className: 'dsh-afk dsh-afk-toolbar' }, h('style', null, css),
-            h(Switch, { checked: (ready || legacy) && effective?.enabled === true, disabled: (!global && !view) || !writable || saving,
+            h(Switch, { checked: ready && effective?.enabled === true, disabled: (!global && !view) || !writable || saving,
               label: t(global ? 'switch.global' : 'switch.label'), text: t(global ? 'afk.global' : 'afk'), onChange: toggle,
-              title: error || (legacy ? t('scope.legacy') : !ready ? t(preferences.status === 'loading' ? 'scope.loading' : 'scope.error') : !writable ? t('forbidden') : (!global && !view) ? t('unavailable') : t(global ? 'switch.global' : 'switch.label')) }),
+              title: error || (!ready ? t(preferences.status === 'loading' ? 'scope.loading' : 'scope.error') : !writable ? t('forbidden') : (!global && !view) ? t('unavailable') : t(global ? 'switch.global' : 'switch.label')) }),
             h('button', { type: 'button', className: 'dsh-afk-history-trigger', disabled: !view || !historyAllowed,
               'aria-label': t('history.title'), 'aria-haspopup': 'dialog', 'aria-expanded': historyOpen,
               title: t('history.title'), onClick: () => setHistoryOpen(previous => !previous) },
@@ -530,9 +475,6 @@ window.__ModuleLoader__.load({
             setHistory({ loading: true, data: null, error: '' });
             queryHistory(sessionId, { offset, limit: PAGE_SIZE, filter }, controller.signal)
               .then(data => {
-                if (!isHistory(data, offset, filter)) {
-                  throw new Error(t('error.history'));
-                }
                 if (!active) return;
                 if (data.total > 0 && offset >= data.total) {
                   setOffset(Math.floor((data.total - 1) / PAGE_SIZE) * PAGE_SIZE);
@@ -691,8 +633,10 @@ window.__ModuleLoader__.load({
         /** @param {{ binding: SessionBinding, sessionId: SessionId, allowed: boolean, language: string }} props */
         function BoundSettings({ binding, sessionId, allowed, language }) {
           const source = React.useMemo(() => binding.session.projections.faceOf(KEY), [binding]);
-          const view = React.useSyncExternalStore(listener => source.subscribe(listener), () => source.getSnapshot(), emptySource.getSnapshot);
-          return isAfkSettings(view) ? h(SessionSettings, { key: sessionId, sessionId, view, allowed, language }) : h('p', { role: 'status' }, t('unavailable'));
+          // The projection registry validates the wire value; only availability is left to check.
+          const view = /** @type {AfkView | undefined} */ (React.useSyncExternalStore(
+            listener => source.subscribe(listener), () => source.getSnapshot(), () => undefined));
+          return view ? h(SessionSettings, { key: sessionId, sessionId, view, allowed, language }) : h('p', { role: 'status' }, t('unavailable'));
         }
         /**
          * @param {{ sessionId: SessionId, useSessionAccess: GlobalStandardProps['useSessionAccess'], language: string }} props
@@ -719,30 +663,29 @@ window.__ModuleLoader__.load({
         /** @param {{ preferences: ReadyAfkPreferences, allowed: boolean }} props */
         function ScopeSettings({ preferences, allowed }) {
           const [draft, setDraft] = React.useState(() => profileSettingsOf(preferences.value));
-          const [dirty, setDirty] = React.useState({ scope: false, toolsEnabled: false });
+          const [dirty, setDirty] = React.useState(false);
           const [saving, setSaving] = React.useState(false);
           const [error, setError] = React.useState('');
           const [saved, setSaved] = React.useState(false);
           const baseRevision = React.useRef(preferences.revision);
           const request = React.useRef(/** @type {AbortController | null} */ (null));
           const id = React.useId();
-          const toolsSupported = typeof preferences.value.toolsEnabled === 'boolean';
-          const changed = dirty.scope || (toolsSupported && dirty.toolsEnabled);
           React.useEffect(() => () => request.current?.abort(), []);
           React.useEffect(() => {
-            if (!changed && baseRevision.current !== preferences.revision) {
+            if (!dirty && baseRevision.current !== preferences.revision) {
               baseRevision.current = preferences.revision;
-              setDraft(profileSettingsOf(preferences.value)); setDirty({ scope: false, toolsEnabled: false }); setSaved(false);
+              setDraft(profileSettingsOf(preferences.value)); setSaved(false);
             }
-          }, [changed, preferences]);
+          }, [dirty, preferences]);
           /** @param {React.FormEvent<HTMLFormElement>} event */
           async function save(event) {
             event.preventDefault();
-            if (!allowed || request.current || !changed) return;
+            if (!allowed || request.current || !dirty) return;
             /** @type {SettingsPathOpView[]} */
-            const ops = [];
-            if (dirty.scope) ops.push({ op: 'set', path: ['scope'], value: draft.scope });
-            if (toolsSupported && dirty.toolsEnabled) ops.push({ op: 'set', path: ['toolsEnabled'], value: draft.toolsEnabled });
+            const ops = [
+              { op: 'set', path: ['scope'], value: draft.scope },
+              { op: 'set', path: ['toolsEnabled'], value: draft.toolsEnabled },
+            ];
             const controller = new AbortController();
             request.current = controller;
             setSaving(true); setError(''); setSaved(false);
@@ -752,7 +695,7 @@ window.__ModuleLoader__.load({
               if (!controller.signal.aborted) {
                 if (preferencesReady(latest)) {
                   baseRevision.current = latest.revision;
-                  setDraft(profileSettingsOf(latest.value)); setDirty({ scope: false, toolsEnabled: false });
+                  setDraft(profileSettingsOf(latest.value)); setDirty(false);
                 }
                 requireAccepted(accepted);
                 setSaved(true);
@@ -763,9 +706,7 @@ window.__ModuleLoader__.load({
           /** @param {Partial<Pick<AfkPreferences, 'scope' | 'toolsEnabled'>>} patch */
           function change(patch) {
             setDraft(previous => ({ ...previous, ...patch }));
-            setDirty(previous => ({ scope: previous.scope || patch.scope !== undefined,
-              toolsEnabled: previous.toolsEnabled || patch.toolsEnabled !== undefined }));
-            setSaved(false); setError('');
+            setDirty(true); setSaved(false); setError('');
           }
           return h('section', { className: 'dsh-afk-section' },
             h('h3', null, t('settings.profile')),
@@ -781,14 +722,11 @@ window.__ModuleLoader__.load({
                 ['session', 'global'].map(value => h('option', { key: value, value }, t(value === 'session' ? 'scope.session' : 'scope.global')))),
               draft.scope === 'global' ? h('p', { className: 'dsh-afk-muted' }, t('scope.global.hint')) : null,
               h('label', { className: 'dsh-afk-row' }, t('tools.label'),
-                h('input', { type: 'checkbox', checked: draft.toolsEnabled === true, disabled: !allowed || saving || !toolsSupported,
+                h('input', { type: 'checkbox', checked: draft.toolsEnabled, disabled: !allowed || saving,
                   'aria-describedby': `${id}-tools-hint`,
-                  onChange: (/** @type {React.ChangeEvent<HTMLInputElement>} */ event) => {
-                    if (toolsSupported) change({ toolsEnabled: event.target.checked });
-                  } })),
-              h('p', { id: `${id}-tools-hint`, className: 'dsh-afk-muted' }, t('tools.hint'),
-                !toolsSupported ? ` ${t('tools.unavailable')}` : ''),
-              h('button', { type: 'submit', className: 'dsh-afk-button dsh-afk-primary', disabled: !allowed || saving || !changed }, t(saving ? 'saving' : 'scope.apply')),
+                  onChange: (/** @type {React.ChangeEvent<HTMLInputElement>} */ event) => change({ toolsEnabled: event.target.checked }) })),
+              h('p', { id: `${id}-tools-hint`, className: 'dsh-afk-muted' }, t('tools.hint')),
+              h('button', { type: 'submit', className: 'dsh-afk-button dsh-afk-primary', disabled: !allowed || saving || !dirty }, t(saving ? 'saving' : 'scope.apply')),
               !allowed ? h('p', { className: 'dsh-afk-error' }, t('forbidden')) : null,
               error ? h('p', { className: 'dsh-afk-error', role: 'alert' }, error) : null,
               saved ? h('p', { className: 'dsh-afk-success', role: 'status' }, t('saved')) : null));

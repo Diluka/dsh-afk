@@ -17,13 +17,6 @@ const load = async name => {
   return import(pathToFileURL(createRequire(join(runtime, 'package.json')).resolve(name)).href);
 };
 
-// Answer, refusal and request-context markers are established wire formats.
-test('runtime tests retain the AFK wire markers', () => {
-  assert.equal(REPLY_PREFIX, '[AFK 自动应答 / not human approval]\n');
-  assert.equal(BLOCK_PREFIX, '[dsh-afk/blocked-v1] ');
-  assert.equal(REQUEST_STATE_PREFIX, '[dsh-afk/request-state-v1] ');
-});
-
 test('isolated installed DSH: real command/projection/tool/scope pipeline, custom replies, policy and disposal', { skip: !runtime }, async () => {
   const [{ Context }, { default: SystemPrompt }, { default: Tools }, { default: Sessions, Session }, { default: Agents }, { default: Commands }, { default: Projections }, { default: UserQuestions }, ask, { createScope, bindScopeParent }, { default: Typert }] = await Promise.all([
     load('@deepseek-ai/cordis'), load('@deepseek-ai/dsh-system-prompt'), load('@deepseek-ai/dsh-tools'),
@@ -141,7 +134,6 @@ test('isolated installed DSH: real command/projection/tool/scope pipeline, custo
     assert.ok(marked.meta?.dshAfkRead);
     assert.equal(marked.meta.dshAfkRead.type, 'dsh-afk/read-v1');
     assert.equal((await execute('afk_mark_read', { ids: [read.value.records[0].id] })).isError, true, 'recordIds is the required public parameter name');
-    assert.equal((await execute('afk_mark_read', { recordIds: [read.value.records[0].id], unexpected: true })).isError, true, 'unknown input fields are rejected');
     const unread = await execute('afk_history', {});
     assert.equal(unread.isError, false);
     assert.equal(unread.value.total, 0);

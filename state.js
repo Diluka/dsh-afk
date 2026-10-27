@@ -79,7 +79,7 @@ export function parseQuestions(args) {
 }
 
 /** @param {unknown} value @returns {value is Record<string, unknown>} */
-function isObject(value) {
+export function isObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
@@ -113,7 +113,7 @@ function submittedAnswers(value, questions) {
 /** @param {AfkState} state @param {LogCoordinates} event @param {string} callId @param {unknown} args @returns {AfkState} */
 function recordCall(state, event, callId, args) {
   const questions = parseQuestions(args);
-  if (!questions || state.pending.some(call => call.callId === callId)) return state;
+  if (!questions) return state;
   const call = { callId, questions, time: event.time, seq: event.seq };
   /** @type {AfkRecord} */
   const record = {
@@ -132,7 +132,6 @@ function recordResult(state, callId, result) {
   if (!pending) return state;
   const rest = state.pending.filter(call => call !== pending);
   const index = state.records.findIndex(record => record.id === `${pending.seq}:${callId}`);
-  if (index < 0) return { ...state, pending: rest };
   const answer = outcome(result.content);
   const answers = isObject(answer) && Array.isArray(answer.answers) ? /** @type {unknown[]} */ (answer.answers) : undefined;
   const reply = Array.isArray(answers) && answers.length === pending.questions.length

@@ -22,24 +22,16 @@ export const Config = Schema.object({
 });
 
 /**
- * @template T
- * @param {import('./types/host.js').LiveConfigValue<T>} value
- * @returns {T | import('./types/host.js').LiveConfigSnapshot<T>}
- */
-const current = value => value && typeof value === 'object' && 'get' in value && typeof value.get === 'function'
-  ? value.get() : /** @type {T} */ (value);
-
-/**
- * Read live references on every use; also accept ordinary programmatic config values.
- * @param {AfkConfigInput} [config]
+ * Read the stable config references on every use; the Loader commits volatile updates into them.
+ * @param {AfkConfigInput} config
  * @returns {AfkPreferences}
  */
-export function readConfig(config = {}) {
-  return { toolsEnabled: current(config.toolsEnabled) ?? true, scope: current(config.scope) ?? 'session', global: current(config.global) ?? defaults };
+export function readConfig(config) {
+  return { toolsEnabled: config.toolsEnabled.get(), scope: config.scope.get(), global: config.global.get() };
 }
 
 /**
- * @param {AfkConfigInput | undefined} config
+ * @param {AfkConfigInput} config
  * @param {AfkState} state
  * @returns {EffectiveSettings}
  */

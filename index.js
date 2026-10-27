@@ -7,25 +7,22 @@
 /** @typedef {import('./types/afk.js').AfkHistory} AfkHistory */
 /** @typedef {import('./types/afk.js').AfkReadReceipt} AfkReadReceipt */
 /** @typedef {import('./types/host.js').EffectiveSettings} EffectiveSettings */
-import { ASK, KEY, MARK_READ, REPLY_PREFIX, BLOCK_PREFIX, LEGACY_BLOCK_MESSAGE, REQUEST_STATE_PREFIX, projection, parseQuestions, settingsSchema, settingsOf, historyOf, markReadOf } from './state.js';
-import { effectiveSettings, readConfig } from './config.js';
+import { ASK, KEY, MARK_READ, REPLY_PREFIX, BLOCK_PREFIX, LEGACY_BLOCK_MESSAGE, REQUEST_STATE_PREFIX, projection, parseQuestions, settingsSchema, settingsOf, historyOf, markReadOf, isObject } from './state.js';
+import { Config, effectiveSettings, readConfig } from './config.js';
 import { registerHistory } from './history.js';
-export { Config } from './config.js';
+export { Config };
 
 export const inject = ['agents', 'commands', 'tools', 'sessionProjections', 'systemPrompt', 'sessions', 'typert'];
-
-/** @param {unknown} value @returns {value is Record<string, unknown>} */
-function isObject(value) {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
 
 /**
  * AFK only owns ordinary ask_user_question calls; approval and plan review stay human-only.
  * @param {HostContext} ctx
- * @param {AfkConfigInput} [config]
+ * @param {AfkConfigInput} [suppliedConfig]
  * @returns {Promise<void>}
  */
-export async function apply(ctx, config) {
+export async function apply(ctx, suppliedConfig) {
+  // One canonical config shape: the Loader's stable references, or defaults for a direct mount.
+  const config = suppliedConfig ?? Config();
   // This bundle owns its configuration page; retain standard Settings reads/writes.
   const owner = ctx.fiber;
   ctx.inject(['settings'], scoped => {
@@ -41,8 +38,8 @@ export async function apply(ctx, config) {
   };
   /** @param {HostAgent} agent @returns {EffectiveSettings} */
   const effective = agent => effectiveSettings(config, stateOf(agent));
-  /** @param {HostAgent | undefined} agent @param {number} [offset] @param {number} [limit] @param {'unread' | 'all'} [filter] @returns {AfkHistory} */
-  const history = (agent, offset = 0, limit = 20, filter = 'unread') => historyOf(stateOf(agent), offset, limit, filter);
+  /** @param {HostAgent | undefined} agent @param {number} offset @param {number} limit @param {'unread' | 'all'} filter @returns {AfkHistory} */
+  const history = (agent, offset, limit, filter) => historyOf(stateOf(agent), offset, limit, filter);
   /** @param {HostAgent | undefined} agent @param {unknown} recordIds @returns {AfkReadReceipt} */
   const markRead = (agent, recordIds) => markReadOf(stateOf(agent), recordIds);
 
@@ -97,15 +94,9 @@ export async function apply(ctx, config) {
       render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }],
     },
     async execute(args, exec) {
-      const input = isObject(args) ? args : {};
-      const offset = input.offset ?? 0;
-      const limit = input.limit ?? 20;
-      const filter = input.filter ?? 'unread';
-      if (typeof offset !== 'number' || typeof limit !== 'number') {
-        throw new Error('offset must be a non-negative integer; limit must be between 1 and 50');
-      }
-      if (filter !== 'unread' && filter !== 'all') throw new Error('filter must be unread or all');
-      return history(exec.agent, offset, limit, filter);
+      // Ranges and filter values are validated by the single business entry point.
+      const input = /** @type {Partial<import('./types/history.js').HistoryQuery>} */ (isObject(args) ? args : {});
+      return history(exec.agent, input.offset ?? 0, input.limit ?? 20, input.filter ?? 'unread');
     },
     isConcurrencySafe: () => true,
   }, {
@@ -124,10 +115,8 @@ export async function apply(ctx, config) {
       presentationMeta: (_args, value) => ({ dshAfkRead: value }),
     },
     async execute(args, exec) {
-      if (!isObject(args) || Object.keys(args).some(key => key !== 'recordIds')) {
-        throw new Error('Provide an object containing only recordIds');
-      }
-      return markRead(exec.agent, args.recordIds);
+      // markReadOf owns the id-set validation; the declared parameters schema owns the field shape.
+      return markRead(exec.agent, /** @type {{ recordIds?: unknown } | undefined} */ (args)?.recordIds);
     },
     isConcurrencySafe: () => true,
   }];
@@ -147,14 +136,14 @@ export async function apply(ctx, config) {
   });
 
   // tools/execute runs only AFTER the existing pre-policy and monotonic guards.
-  // Claiming this exact tool keeps legacy, timed and PTC calls consistent, without touching approval requests.
+  // Claiming this exact tool keeps native and PTC calls consistent, without touching approval requests.
   ctx.on('tools/execute', async (exec, next) => {
     if (exec.name !== ASK || !exec.agent || exec.signal.aborted) return next();
     const settings = effective(exec.agent);
     if (!settings.enabled || settings.mode !== 'auto-reply') return next();
+    // Every supported Host exposes ask_user_question's optional timeout argument.
     const timeout = isObject(exec.arguments) ? exec.arguments.timeout : undefined;
-    const timed = Object.hasOwn(ctx.tools.get(ASK, exec.agent)?.parameters?.properties ?? {}, 'timeout');
-    if (timed && timeout !== undefined && timeout !== -1
+    if (timeout !== undefined && timeout !== -1
       && (typeof timeout !== 'number' || !Number.isInteger(timeout) || timeout < 1 || timeout > 2147483)) {
       const message = 'AFK: timeout must be -1 or an integer between 1 and 2147483 seconds.';
       return { isError: true, error: { message }, content: [{ type: 'text', text: message }] };

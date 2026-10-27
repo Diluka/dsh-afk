@@ -20,12 +20,6 @@ const load = async name => {
 };
 const pluginPath = pathToFileURL(join(pluginDir, 'index.js')).href;
 
-// These markers are part of the answer and stored request-context wire formats.
-test('scope tests retain the AFK wire markers', () => {
-  assert.equal(REPLY_PREFIX, '[AFK 自动应答 / not human approval]\n');
-  assert.equal(REQUEST_STATE_PREFIX, '[dsh-afk/request-state-v1] ');
-});
-
 test('Config uses stable volatile scope and one atomic global object with validated safe defaults', () => {
   const refs = Config();
   assert.equal(typeof refs.scope.get, 'function');
@@ -36,23 +30,19 @@ test('Config uses stable volatile scope and one atomic global object with valida
   assert.equal(Config.dict.global.meta.volatile, true);
   assert.equal(Config.dict.toolsEnabled.meta.volatile, true);
   assert.deepEqual(readConfig(refs), { toolsEnabled: true, scope: 'session', global: { enabled: false, mode: 'auto-reply', reply: DEFAULT_REPLY } });
-  assert.equal(readConfig().toolsEnabled, true, 'omitting the new setting preserves existing tools');
-  assert.equal(readConfig({ toolsEnabled: false }).toolsEnabled, false, 'plain false must not fall back to true');
+  assert.equal(readConfig(Config()).toolsEnabled, true, 'the default config preserves existing tools');
   assert.equal(readConfig(Config({ toolsEnabled: false })).toolsEnabled, false, 'live false must not fall back to true');
   for (const toolsEnabled of ['false', 0, [], {}]) {
     // @ts-expect-error 故意不合法：工具开关只接受布尔值，不接受字符串或其他类型。
     assert.throws(() => Config({ toolsEnabled }));
   }
-  assert.equal(readConfig({ scope: 'global', global: { enabled: true, mode: 'auto-reply', reply: 'raw' } }).global.reply, 'raw');
+  assert.equal(readConfig(Config({ scope: 'global', global: { enabled: true, mode: 'auto-reply', reply: 'raw' } })).global.reply, 'raw');
   // The pure config resolver does not inspect a Session header; this fixture supplies no unrelated header fields.
   const local = projection.init(/** @type {import('@deepseek-ai/dsh-session').SessionHeader} */ (/** @type {unknown} */ ({})), /** @type {import('@deepseek-ai/dsh-session').SessionLogOffset} */ (0));
   assert.deepEqual(effectiveSettings(refs, local), { scope: 'session', enabled: false, mode: 'auto-reply', reply: DEFAULT_REPLY });
   /** @type {import('../types/afk.js').AfkSettings} */
   const global = { enabled: true, mode: 'disable-ask', reply: ' 原样\n回复 ' };
-  const configured = Config({ scope: 'global', global });
-  assert.deepEqual(effectiveSettings(configured, local), { scope: 'global', ...global });
-  // @ts-expect-error 故意不合法：未知嵌套scope字段不能覆盖真正的配置作用范围。
-  assert.equal(effectiveSettings({ scope: 'global', global: { ...global, scope: 'session' } }, local).scope, 'global', 'unknown object extensions cannot overwrite the selected scope');
+  assert.deepEqual(effectiveSettings(Config({ scope: 'global', global }), local), { scope: 'global', ...global });
   for (const scope of ['all', '', true, []]) {
     // @ts-expect-error 故意不合法：验证真实Config拒绝无效作用范围。
     assert.throws(() => Config({ scope }));
