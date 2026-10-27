@@ -36,7 +36,11 @@ test('successful history queries stay hidden with the current page shape only', 
   const oldShape = summarize(result({ total: 3, records: [] }), t);
   assert.equal(oldShape.text, '操作已完成');
   assert.equal(oldShape.hidden, undefined);
-  // A historical command log without arguments stays hidden even before/after its outcome shape changes.
+  // The current page shape without recorded arguments is still hidden as a read-only summary.
+  const noArgs = summarize(result({ total: 5, totalAll: 6, unread: 5, offset: 0, limit: 20, filter: 'unread', records: [] }), t);
+  assert.equal(noArgs.hidden, true);
+  assert.equal(noArgs.text, '记录：未读 5 批 / 共 6 批');
+  // A historical command log with history arguments stays hidden even when its old outcome shape is unreadable.
   const logged = summarize({ ...result({ total: 3, records: [] }), args: 'history 0 20' }, t);
   assert.equal(logged.hidden, true);
   assert.equal(logged.text, '');

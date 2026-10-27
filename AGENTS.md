@@ -73,7 +73,7 @@ dsh plugin --profile web add "link:$PWD"
 
 - 模式、作用范围和回复放在插件详情页；提问记录放在当前会话 AFK 开关旁。全局 scope 只限当前 Host/profile，记录与已读始终按会话隔离。
 - 使用受支持 Slots、主题 token、locale 和 selector hooks；注册与订阅归属插件生命周期，不写组件外 DOM。开关须适配深浅色，记录窗口保持无蒙层、支持关闭/Escape。
-- 聊天只在 `conversation.chat.commandview` 的 `afk` key 下显示人类可读摘要；只读 history 查询的 pending/success 不渲染提示，失败与写入回执仍可见。仅改变呈现，不删除 command 日志或机器结果；兼容缺失 args 的旧 history 结果。不接管其他命令，不打印原始 JSON、问题正文、回复或累计 readIds。
+- 聊天只在 `conversation.chat.commandview` 的 `afk` key 下显示人类可读摘要；只读 history 查询的 pending/success 不渲染提示，失败与写入回执仍可见。仅改变呈现，不删除 command 日志或机器结果；历史命令节点缺少 args 时仍按当前 history 页形状（`totalAll`/`unread`）隐藏为只读摘要，无法识别的旧载荷只显示通用完成提示。不接管其他命令，不打印原始 JSON、问题正文、回复或累计 readIds。
 - 记录窗口通过 `afkHistory/history` 只读 Remote 查询，禁止回退 `/afk history` 命令、创建空聊天节点或用滚动补偿掩盖副作用；读取不能改变 Session seq、projection revision 或已读状态。查询权限按 Session 的该 endpoint 独立检查，标记已读仍检查 `commands/execute`。冷读取使用 Session observation/restore，不激活 Agent；租约、取消和 Remote 注册归属插件生命周期。
 - 保留机器结果和写入的持久回执。标记已读后只由 projection revision 自动刷新一次，不额外 setRefresh；分页越界校正与显式刷新仍保留。
 - 配置不可用时默认拒绝修改。同版本 Host/Client 配对是唯一运行契约：插件升级后须完成页面刷新与宿主要求的重启；过渡期（新 Client 对旧 Host 模块）允许功能按「后台未提供」的不可用状态禁用，不提供 legacy 读写兜底。
@@ -92,7 +92,7 @@ dsh plugin --profile web add "link:$PWD"
 /afk read ["历史列表返回的记录 ID"]
 ```
 
-`/afk` 查询当前有效设置和 scope；history/read 始终只操作当前会话。Agent 工具仅有 `afk_history({offset?, limit?, filter?})` 与用户要求确认时使用的 `afk_mark_read({recordIds:[...]})`：filter 默认 unread，limit 为1–50，单纯读取不自动标记。顶层 volatile 配置 `toolsEnabled` 默认 `true`，在当前 profile 统一控制这两个工具的注册；关闭时撤销注册并移除提示词中的工具指引，不影响 AFK 策略、记录、UI Remote 或用户命令。该设置走标准 Settings 权限与 revision/CAS，不受 AFK scope 影响。不要新增 Agent 可用的开关、配置修改或批准权限工具。
+`/afk` 查询当前有效设置和 scope；history/read 始终只操作当前会话。Agent 工具仅有 `afk_history({offset?, limit?, filter?})` 与用户要求确认时使用的 `afk_mark_read({recordIds:[...]})`：filter 默认 unread，limit 为1–50，单纯读取不自动标记。顶层 volatile 配置 `toolsEnabled` 默认 `true`，在当前 profile 统一控制这两个工具的注册；关闭时撤销注册并移除提示词中的工具指引，不影响 AFK 策略、记录、UI Remote 或用户命令。该设置走标准 Settings 权限与 revision/CAS，不受 AFK scope 影响。不要新增 Agent 可用的开关、配置修改或批准权限工具。工具 `parameters` 只是模型可见契约，原始注册不做运行时参数校验；必要字段与取值由业务入口校验，多余字段被忽略，不能把 schema 声明当作运行时防御。
 
 回复为1–2000字符的非空白文本，配置原文不截断/trim，发送时另加固定 AFK 标识。旧记录必须保留当时实际回复。记录与本地设置沿宿主 Session 的保留周期；不将尚未刷盘时的异常断电视为持久性保证，也不把全局配置删除与删除某个 Session 混为一谈。
 
@@ -115,7 +115,7 @@ DSH_TEST_RUNTIME_DIR="$PWD/test/runtimes/rc2" DSH_TEST_RUNTIME_VERSION=0.2.1-rc.
 ```
 
 - 按 [CI 矩阵](./.github/workflows/ci.yml) 只覆盖关键矩阵 `latest`（rc.2）与 `next`（rc.4）；相邻发行按 API 兼容默认成立，不逐版穷举。`DSH_TEST_RUNTIME_VERSION` 防止误用祖先目录提供的另一版 SDK，`DSH_TEST_ZOD_VERSION` 可进一步要求实际 provider 的精确版本。夹具的 override 不代表完整 CLI 依赖拓扑；测试不启动服务器、不调用模型、不读写用户 profile。
-- 也可将该变量设为另一个已确认 DSH 安装的绝对目录。对 DSH CLI 安装，测试入口按真实 `createRuntimeResolution` 的安装依赖闭包构造隔离测试视图，而不将普通 Node 根解析误作宿主 provider。仅运行 `pnpm test` 时部分集成检查会 skipped，必须如实报告，不能当完整通过。
+- 也可将该变量设为另一个已确认 DSH 安装的绝对目录（仅接受关键矩阵发行版，集成测试会校验实际版本与 provider）。对 DSH CLI 安装，测试入口按真实 `createRuntimeResolution` 的安装依赖闭包构造隔离测试视图，而不将普通 Node 根解析误作宿主 provider。仅运行 `pnpm test` 时部分集成检查会 skipped，必须如实报告，不能当完整通过。
 - [运行时测试入口](./scripts/test-runtime.js) 将源码或最终制品的运行文件复制到无自身 node_modules 的临时 payload，其父级仅提供所选真实 SDK 的公共 peer，完整功能测试不得回落到根开发 SDK 的另一版 peer；临时夹具在退出时清理，不修改 SDK 安装。[peer 测试](./test/peers.test.js) 检查生产 manifest 契约、功能 payload 的真实路径与 ESM 类身份，并用真实宿主解析器验证外部 link 的 provider 选择；[profile peer 测试](./test/profile-peers.test.js) 覆盖普通安装时 profile 本地副本优先及核心运行、历史查询链路。别用原位开发依赖或只导入模块掩盖完整功能链中的混版。
 - 纯 formatter VM 检查不等于 React 或 GUI 测试。UI 变化须在真实宿主检查交互、主题、键盘/焦点和错误状态，并恢复改动的用户设置、归档测试会话、关闭测试浏览器。
 - 逐文件运行语法检查；`node --check` 接多个文件参数不代表检查所有文件。项目未配置独立 lint 命令，不要声称运行了不存在的检查。

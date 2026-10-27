@@ -115,7 +115,7 @@ export async function apply(ctx, suppliedConfig) {
       presentationMeta: (_args, value) => ({ dshAfkRead: value }),
     },
     async execute(args, exec) {
-      // markReadOf owns the id-set validation; the declared parameters schema owns the field shape.
+      // markReadOf owns the id-set validation; extra fields are ignored, not rejected.
       return markRead(exec.agent, /** @type {{ recordIds?: unknown } | undefined} */ (args)?.recordIds);
     },
     isConcurrencySafe: () => true,
