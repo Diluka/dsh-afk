@@ -26,6 +26,13 @@ async function versionOf(directory) {
   return version;
 }
 
+/** @param {{ version?: string }} entry @param {Record<string, unknown>} metadata */
+function installationDependencyVersion(entry, metadata) {
+  assert.ok(metadata.version === undefined || typeof metadata.version === 'string', 'installation entry version must be a string when present');
+  assert.equal(entry.version, metadata.version, 'installation entry version must match its manifest');
+  return entry.version ?? '*';
+}
+
 /**
  * The other supported Zod is an existing, installed workspace SDK provider, not
  * a constructed package. Both versions are installed by the existing matrix.
@@ -224,6 +231,46 @@ async function exerciseFixture() {
 if (child) {
   await exerciseFixture();
 } else {
+  test('CLI installation entries preserve optional versions without accepting malformed metadata', () => {
+    assert.equal(installationDependencyVersion({}, {}), '*');
+    assert.equal(installationDependencyVersion({ version: '1.2.3' }, { version: '1.2.3' }), '1.2.3');
+    assert.throws(() => installationDependencyVersion({}, { version: null }), /version must be a string/);
+    assert.throws(() => installationDependencyVersion({ version: '1.2.3' }, { version: '2.0.0' }), /version must match/);
+  });
+
+  test('real SDK resolves a CLI-shaped installation with a versionless dependency', { skip: !runtime }, async () => {
+    assert.ok(runtime);
+    const root = await mkdtemp(join(resolve(tmpdir()), 'dsh-afk-cli-optional-version-'));
+    try {
+      const cli = join(root, 'cli');
+      const modules = join(cli, 'node_modules');
+      const require = createRequire(join(runtime, 'package.json'));
+      /** @type {Record<string, string>} */
+      const dependencies = { 'afk-versionless-fixture': '*' };
+      for (const name of ['@deepseek-ai/dsh-app-boot', ...peers]) {
+        const destination = join(modules, name);
+        await mkdir(dirname(destination), { recursive: true });
+        await symlink(await realpath(dirname(require.resolve(`${name}/package.json`))), destination, 'dir');
+        dependencies[name] = '*';
+      }
+      const versionless = join(modules, 'afk-versionless-fixture');
+      await mkdir(versionless);
+      await writeFile(join(versionless, 'package.json'), JSON.stringify({ name: 'afk-versionless-fixture' }));
+      await writeFile(join(cli, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh', dependencies }));
+      const { providers, installationEntries } = await hostProviders(cli, join(root, 'home'));
+      assert.ok(installationEntries, 'the real SDK must select the CLI installation branch');
+      const entry = installationEntries.find(item => item.name === 'afk-versionless-fixture');
+      assert.ok(entry);
+      assert.equal(await realpath(entry.packageDir), await realpath(versionless));
+      assert.equal(installationDependencyVersion(entry, await manifestOf(join(entry.packageDir, 'package.json'))), '*');
+      assert.equal(providers.get('zod'), await realpath(dirname(require.resolve('zod/package.json'))));
+    } finally {
+      assert.equal(dirname(root), resolve(tmpdir()));
+      assert.match(basename(root), /^dsh-afk-cli-optional-version-/);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test('ordinary profile installation prefers copied local peers and retains real runtime behavior', { skip: !runtime, timeout: 90_000 }, async t => {
     assert.ok(runtime);
     const runtimeDir = resolve(runtime);
@@ -253,12 +300,9 @@ if (child) {
           const destination = join(installDir, 'node_modules', entry.name);
           await mkdir(dirname(destination), { recursive: true });
           await symlink(entry.packageDir, destination, 'dir');
-          // The SDK permits a missing version, but malformed manifests must
-          // not be silently normalized while reproducing the selected table.
+          // Preserve the SDK's optional version while rejecting malformed data.
           const metadata = await manifestOf(join(entry.packageDir, 'package.json'));
-          assert.ok(metadata.version === undefined || typeof metadata.version === 'string', 'installation entry version must be a string when present');
-          assert.equal(entry.version, metadata.version, 'installation entry version must match its manifest');
-          hostDependencies[entry.name] = entry.version ?? '*';
+          hostDependencies[entry.name] = installationDependencyVersion(entry, metadata);
         }
       }
       /** @type {Record<string, string>} */
