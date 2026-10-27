@@ -253,7 +253,8 @@ if (child) {
           const destination = join(installDir, 'node_modules', entry.name);
           await mkdir(dirname(destination), { recursive: true });
           await symlink(entry.packageDir, destination, 'dir');
-          hostDependencies[entry.name] = await versionOf(entry.packageDir);
+          // The SDK permits an installation entry without a package version.
+          hostDependencies[entry.name] = entry.version ?? '*';
         }
       }
       /** @type {Record<string, string>} */
