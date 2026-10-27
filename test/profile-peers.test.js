@@ -253,7 +253,11 @@ if (child) {
           const destination = join(installDir, 'node_modules', entry.name);
           await mkdir(dirname(destination), { recursive: true });
           await symlink(entry.packageDir, destination, 'dir');
-          // The SDK permits an installation entry without a package version.
+          // The SDK permits a missing version, but malformed manifests must
+          // not be silently normalized while reproducing the selected table.
+          const metadata = await manifestOf(join(entry.packageDir, 'package.json'));
+          assert.ok(metadata.version === undefined || typeof metadata.version === 'string', 'installation entry version must be a string when present');
+          assert.equal(entry.version, metadata.version, 'installation entry version must match its manifest');
           hostDependencies[entry.name] = entry.version ?? '*';
         }
       }
