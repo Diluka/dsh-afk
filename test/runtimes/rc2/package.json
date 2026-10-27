@@ -39,6 +39,6 @@
     "@deepseek-ai/dsh-typert-registry": "0.2.1-rc.2",
     "@deepseek-ai/dsh-user-questions": "0.2.1-rc.2",
     "@deepseek-ai/schemastery": "3.18.5",
-    "zod": "4.6.7"
+    "zod": "4.4.3"
   }
 }

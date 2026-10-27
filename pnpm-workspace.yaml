@@ -1,6 +1,7 @@
 packages:
   - test/runtimes/alpha3
   - test/runtimes/rc2
+  - test/runtimes/rc4-zod443
 
 autoInstallPeers: false
 
@@ -11,5 +12,4 @@ hoistPattern:
 
 # Align the current SDK declarations without replacing the oldest SDK's real provider.
 overrides:
-  '@deepseek-ai/dsh-session-projection@0.2.1-rc.2>zod': 4.6.7
-  '@deepseek-ai/dsh-session-projection@0.2.1-rc.3>zod': 4.6.7
+  '@deepseek-ai/dsh-session-projection@0.2.1-rc.4>zod': 4.6.7

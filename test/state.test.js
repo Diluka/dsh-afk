@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { projection, DEFAULT_REPLY, REPLY_PREFIX, BLOCK_PREFIX, LEGACY_BLOCK_MESSAGE, REQUEST_STATE_PREFIX, MARK_READ, settingsSchema, parseQuestions, historyOf, markReadOf } from '../state.js';
+import { join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+const pluginDir = process.env.DSH_TEST_PLUGIN_DIR ?? fileURLToPath(new URL('..', import.meta.url));
+const { projection, DEFAULT_REPLY, REPLY_PREFIX, BLOCK_PREFIX, LEGACY_BLOCK_MESSAGE, REQUEST_STATE_PREFIX, MARK_READ, settingsSchema, parseQuestions, historyOf, markReadOf } =
+  /** @type {typeof import('../state.js')} */ (await import(pathToFileURL(join(pluginDir, 'state.js')).href));
 
 const questions = [{ id: 'strategy', question: '采用哪种实现？', header: '实现方式', options: [{ label: 'A (Recommended)', description: '简单' }, { label: 'B' }], multi_select: false }];
 /** @type {import('../types/afk.js').AfkSettings} */
