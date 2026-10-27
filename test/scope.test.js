@@ -2,11 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { pathToFileURL, fileURLToPath } from 'node:url';
-import { join, dirname, basename } from 'node:path';
+import { join, dirname, basename, resolve } from 'node:path';
 import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { Config, readConfig, effectiveSettings } from '../config.js';
-import { projection, DEFAULT_REPLY, REPLY_PREFIX, REQUEST_STATE_PREFIX } from '../state.js';
+
+const pluginDir = process.env.DSH_TEST_PLUGIN_DIR ?? fileURLToPath(new URL('..', import.meta.url));
+const { Config, readConfig, effectiveSettings } =
+  /** @type {typeof import('../config.js')} */ (await import(pathToFileURL(join(pluginDir, 'config.js')).href));
+const { projection, DEFAULT_REPLY, REPLY_PREFIX, REQUEST_STATE_PREFIX } =
+  /** @type {typeof import('../state.js')} */ (await import(pathToFileURL(join(pluginDir, 'state.js')).href));
 
 const runtime = process.env.DSH_TEST_RUNTIME_DIR;
 /** @type {import('../types/test.js').RuntimeLoader} */
@@ -14,7 +18,13 @@ const load = async name => {
   assert.ok(runtime, 'Only non-skipped real-runtime tests load SDK modules');
   return import(pathToFileURL(createRequire(join(runtime, 'package.json')).resolve(name)).href);
 };
-const pluginPath = pathToFileURL(join(process.env.DSH_TEST_PLUGIN_DIR ?? fileURLToPath(new URL('..', import.meta.url)), 'index.js')).href;
+const pluginPath = pathToFileURL(join(pluginDir, 'index.js')).href;
+
+// These markers are part of the answer and stored request-context wire formats.
+test('scope tests retain the AFK wire markers', () => {
+  assert.equal(REPLY_PREFIX, '[AFK 自动应答 / not human approval]\n');
+  assert.equal(REQUEST_STATE_PREFIX, '[dsh-afk/request-state-v1] ');
+});
 
 test('Config uses stable volatile scope and one atomic global object with validated safe defaults', () => {
   const refs = Config();
@@ -71,7 +81,7 @@ test('real volatile Settings persist atomically without remount; scope controls 
     load('@deepseek-ai/dsh-user-questions'), load('@deepseek-ai/dsh-tool-ask-user'), load('@deepseek-ai/dsh-scope'), load('@deepseek-ai/dsh-config-editor'),
     load('@deepseek-ai/dsh-settings'), load('@deepseek-ai/dsh-app-boot'), load('@deepseek-ai/dsh-llm'), load('@deepseek-ai/dsh-typert-registry'),
   ]);
-  const dir = await mkdtemp(join(tmpdir(), 'dsh-afk-scope-'));
+  const dir = await mkdtemp(join(resolve(tmpdir()), 'dsh-afk-scope-'));
   const home = join(dir, 'home');
   const profileDir = join(home, 'profiles', 'fixture');
   await mkdir(profileDir, { recursive: true });
@@ -433,7 +443,7 @@ test('real volatile Settings persist atomically without remount; scope controls 
     for (const dispose of registrations.reverse()) await dispose?.();
     for (const scope of scopes.reverse()) await scope.dispose();
     await ctx.fiber.dispose();
-    assert.equal(dirname(dir), tmpdir());
+    assert.equal(dirname(dir), resolve(tmpdir()));
     assert.match(basename(dir), /^dsh-afk-scope-/);
     await rm(dir, { recursive: true, force: true });
   }

@@ -1,12 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { join } from 'node:path';
-import { REPLY_PREFIX, BLOCK_PREFIX, REQUEST_STATE_PREFIX } from '../state.js';
+
 // Packed-plugin checks use the same declared plugin contract at a different module URL.
-const afk = /** @type {typeof import('../index.js')} */ (await import(process.env.DSH_TEST_PLUGIN_DIR
-  ? pathToFileURL(join(process.env.DSH_TEST_PLUGIN_DIR, 'index.js')).href : '../index.js'));
+const pluginDir = process.env.DSH_TEST_PLUGIN_DIR ?? fileURLToPath(new URL('..', import.meta.url));
+const { REPLY_PREFIX, BLOCK_PREFIX, REQUEST_STATE_PREFIX } =
+  /** @type {typeof import('../state.js')} */ (await import(pathToFileURL(join(pluginDir, 'state.js')).href));
+const afk = /** @type {typeof import('../index.js')} */ (await import(pathToFileURL(join(pluginDir, 'index.js')).href));
 
 const runtime = process.env.DSH_TEST_RUNTIME_DIR;
 /** @type {import('../types/test.js').RuntimeLoader} */
@@ -14,6 +16,13 @@ const load = async name => {
   assert.ok(runtime, 'Only non-skipped real-runtime tests load SDK modules');
   return import(pathToFileURL(createRequire(join(runtime, 'package.json')).resolve(name)).href);
 };
+
+// Answer, refusal and request-context markers are established wire formats.
+test('runtime tests retain the AFK wire markers', () => {
+  assert.equal(REPLY_PREFIX, '[AFK 自动应答 / not human approval]\n');
+  assert.equal(BLOCK_PREFIX, '[dsh-afk/blocked-v1] ');
+  assert.equal(REQUEST_STATE_PREFIX, '[dsh-afk/request-state-v1] ');
+});
 
 test('isolated installed DSH: real command/projection/tool/scope pipeline, custom replies, policy and disposal', { skip: !runtime }, async () => {
   const [{ Context }, { default: SystemPrompt }, { default: Tools }, { default: Sessions, Session }, { default: Agents }, { default: Commands }, { default: Projections }, { default: UserQuestions }, ask, { createScope, bindScopeParent }, { default: Typert }] = await Promise.all([
