@@ -56,12 +56,7 @@ export type ReadyAfkPreferences = AfkPreferencesSnapshot & {
   value: AfkPreferences;
   revision: number;
 };
-export interface LegacyProof {
-  snapshot: AfkPreferencesSnapshot;
-  epoch: number;
-  legacy: boolean;
-}
-/** History presentation consumes only these fields, including from a supported legacy Host. */
+/** History presentation consumes only these fields of the shared projection record. */
 export type HistoryRecordView = Pick<AfkRecord, 'id' | 'callId' | 'time' | 'questions' | 'reply' | 'read' | 'status' | 'answer'>;
 export type HistoryPage = Omit<AfkHistory, 'records'> & { records: HistoryRecordView[] };
 export interface HistoryLoadState {

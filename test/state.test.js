@@ -7,6 +7,14 @@ const pluginDir = process.env.DSH_TEST_PLUGIN_DIR ?? fileURLToPath(new URL('..',
 const { projection, DEFAULT_REPLY, REPLY_PREFIX, BLOCK_PREFIX, LEGACY_BLOCK_MESSAGE, REQUEST_STATE_PREFIX, MARK_READ, settingsSchema, parseQuestions, historyOf, markReadOf } =
   /** @type {typeof import('../state.js')} */ (await import(pathToFileURL(join(pluginDir, 'state.js')).href));
 
+// Answer, refusal and request-context markers are persisted wire formats shared by Host and Client.
+test('AFK wire markers stay stable', () => {
+  assert.equal(REPLY_PREFIX, '[AFK 自动应答 / not human approval]\n');
+  assert.equal(BLOCK_PREFIX, '[dsh-afk/blocked-v1] ');
+  assert.equal(LEGACY_BLOCK_MESSAGE, 'AFK: ask_user_question is disabled while the user is away. Choose a safe approach within existing authority; do not treat absence as approval.');
+  assert.equal(REQUEST_STATE_PREFIX, '[dsh-afk/request-state-v1] ');
+});
+
 const questions = [{ id: 'strategy', question: '采用哪种实现？', header: '实现方式', options: [{ label: 'A (Recommended)', description: '简单' }, { label: 'B' }], multi_select: false }];
 /** @type {import('../types/afk.js').AfkSettings} */
 const settings = { enabled: true, mode: 'auto-reply', reply: '我不在，请选择安全方案继续。' };

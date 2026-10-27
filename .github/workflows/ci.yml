@@ -26,10 +26,6 @@ jobs:
       matrix:
         node: ['22.x', '24.x']
         dsh:
-          - role: 'minimum'
-            version: '0.2.1-alpha.3'
-            directory: 'test/runtimes/alpha3'
-            zod: '4.4.3'
           - role: 'latest'
             version: '0.2.1-rc.2'
             directory: 'test/runtimes/rc2'
@@ -38,10 +34,6 @@ jobs:
             version: '0.2.1-rc.4'
             directory: '.'
             zod: '4.6.7'
-          - role: 'next-zod-4.4.3'
-            version: '0.2.1-rc.4'
-            directory: 'test/runtimes/rc4-zod443'
-            zod: '4.4.3'
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

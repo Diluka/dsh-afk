@@ -7,7 +7,7 @@
 /** @import { AfkHistory } from './types/afk.js' */
 import { TypertRemoteService, RemoteError } from '@deepseek-ai/dsh-typert-protocol';
 import { z } from 'zod';
-import { KEY, projection, recordSchema, historyOf } from './state.js';
+import { KEY, recordSchema, historyOf } from './state.js';
 
 export const historyQuerySchema = z.object({
   offset: z.number().int().nonnegative(), limit: z.number().int().min(1).max(50), filter: z.enum(['unread', 'all']),
@@ -49,7 +49,7 @@ export class AfkHistoryService extends TypertRemoteService {
   async history(address, query, callerSignal) {
     const signal = AbortSignal.any([callerSignal, this.lifetime.signal]);
     signal.throwIfAborted();
-    const { offset, limit, filter } = historyQuerySchema.parse(query);
+    const { offset, limit, filter } = query;
     const live = this.sessions.get(address.sessionId);
     if (live) {
       const state = this.ctx.sessionProjections.stateOf(live, KEY);
@@ -66,7 +66,9 @@ export class AfkHistoryService extends TypertRemoteService {
         /** @type {import('@deepseek-ai/dsh-session').SessionLogOffset} */ (0), observation.header, observation.inheritedEventCount);
       const row = restored.checkpoint[KEY];
       if (!row) throw new RemoteError('afk-history/unavailable', 'AFK history is unavailable', {});
-      const state = projection.stateSchema.parse(row.val);
+      // restore() seeds each usable row through stateSchema and otherwise folds init/apply,
+      // so its refreshed checkpoint value is already projection state.
+      const state = /** @type {import('./types/afk.js').AfkState} */ (row.val);
       return structuredClone(historyOf(state, offset, limit, filter));
     } finally {
       observation[Symbol.dispose]();

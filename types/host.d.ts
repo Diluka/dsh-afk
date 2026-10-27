@@ -32,14 +32,13 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
 }
 
 /** The read face of Schemastery's official volatile output. */
-export type LiveConfigValue<T> = T | Pick<ReturnType<Schemastery<T, T, 'volatile-defined'>>, 'get'>;
-export type LiveConfigSnapshot<T> = ReturnType<ReturnType<Schemastery<T, T, 'volatile-defined'>>['get']>;
-/** Plugin-owned config accepts Loader live references or plain programmatic values. */
-export type AfkConfigInput = Partial<{
-  toolsEnabled: LiveConfigValue<boolean>;
-  scope: LiveConfigValue<AfkScope>;
-  global: LiveConfigValue<AfkSettings>;
-}>;
+export type LiveConfigRef<T> = Pick<ReturnType<Schemastery<T, T, 'volatile-defined'>>, 'get'>;
+/** Canonical plugin config: one stable reference per declared field after Loader/cordis resolution. */
+export type AfkConfigInput = {
+  toolsEnabled: LiveConfigRef<boolean>;
+  scope: LiveConfigRef<AfkScope>;
+  global: LiveConfigRef<AfkSettings>;
+};
 export type EffectiveSettings = AfkSettings & { scope: AfkScope };
 export type HostContext = Context;
 export type HostAgent = Agent;
