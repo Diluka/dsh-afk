@@ -31,7 +31,7 @@ jobs:
             directory: 'test/runtimes/rc2'
             zod: '4.4.3'
           - role: 'next'
-            version: '0.2.1-rc.4'
+            version: '0.2.1-rc.5'
             directory: '.'
             zod: '4.6.7'
     steps:
@@ -67,7 +67,7 @@ jobs:
           mkdir -p artifacts/unpacked
           pnpm pack --out artifacts/dsh-afk-ci.tgz
           tar -xzf artifacts/dsh-afk-ci.tgz -C artifacts/unpacked
-          node --input-type=module -e "import { readFile, access } from 'node:fs/promises'; const p=JSON.parse(await readFile('artifacts/unpacked/package/package.json','utf8')); for(const f of ['index.js','state.js','config.js','history.js','client.js','icon.svg','locale/en.json','locale/zh.json','types/afk.d.ts','types/host.d.ts','types/client.d.ts','types/history.d.ts']) await access('artifacts/unpacked/package/'+f); if(p.engines.dsh!=='>=0.2.1-alpha.3 <=0.2.1-rc.4') throw new Error('Unexpected compatibility target');"
+          node --input-type=module -e "import { readFile, access } from 'node:fs/promises'; const p=JSON.parse(await readFile('artifacts/unpacked/package/package.json','utf8')); for(const f of ['index.js','state.js','config.js','history.js','client.js','icon.svg','locale/en.json','locale/zh.json','types/afk.d.ts','types/host.d.ts','types/client.d.ts','types/history.d.ts']) await access('artifacts/unpacked/package/'+f); if(p.engines.dsh!=='>=0.2.1-alpha.3 <=0.2.1-rc.5') throw new Error('Unexpected compatibility target');"
       - name: Typecheck standalone packed JavaScript and declarations
         run: |
           node --input-type=module -e "import { writeFile } from 'node:fs/promises'; await writeFile('artifacts/tsconfig.package.json',JSON.stringify({extends:'../tsconfig.json',include:['unpacked/package/*.js','unpacked/package/types/**/*.d.ts'],exclude:[]}));"

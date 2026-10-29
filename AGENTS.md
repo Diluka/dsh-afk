@@ -21,7 +21,7 @@
 ## 环境与依赖
 
 - 兼容范围、必需 peer 和 pnpm 版本以 [package.json](./package.json) 为准；SDK 及测试夹具版本以各自的依赖清单和锁文件为准。
-- 兼容声明与验证矩阵分开维护：声明可以覆盖连续历史区间，真实 SDK 集成只跑关键矩阵 `latest` 与 `next`（当前为 [rc.2 夹具](./test/runtimes/rc2/package.json) 与 [根目录 rc.4](./package.json)）；相邻发行按 API 兼容默认成立，不逐版验证。
+- 兼容声明与验证矩阵分开维护：声明可以覆盖连续历史区间，真实 SDK 集成只跑关键矩阵 `latest` 与 `next`（当前为 [rc.2 夹具](./test/runtimes/rc2/package.json) 与 [根目录 rc.5](./package.json)）；相邻发行按 API 兼容默认成立，不逐版验证。
 - 宿主已有的公共库优先使用必需 `peerDependencies`，开发与 CI 在 `devDependencies` 精确固定同版；不要引入普通生产依赖的重复副本。
 - 保留 [pnpm-workspace.yaml](./pnpm-workspace.yaml) 的 `autoInstallPeers: false`；缺失 peer 时不要靠自动选版掩盖问题，也不要把必需 peer 标为 optional。
 - peer 是兼容声明，不是自动运行时保护。改版本前核对实际宿主及其解析契约；分别验证外部 link 与普通安装的 provider。profile 本地同名依赖可能优先于宿主安装副本，须验证实际选择及功能，不能一概假设两者身份相同。
@@ -110,11 +110,11 @@ dsh plugin --profile web add "link:$PWD"
 ```bash
 pnpm run check
 pnpm run typecheck
-DSH_TEST_RUNTIME_DIR="$PWD" DSH_TEST_RUNTIME_VERSION=0.2.1-rc.4 pnpm run test:runtime
+DSH_TEST_RUNTIME_DIR="$PWD" DSH_TEST_RUNTIME_VERSION=0.2.1-rc.5 pnpm run test:runtime
 DSH_TEST_RUNTIME_DIR="$PWD/test/runtimes/rc2" DSH_TEST_RUNTIME_VERSION=0.2.1-rc.2 pnpm run test:runtime
 ```
 
-- 按 [CI 矩阵](./.github/workflows/ci.yml) 只覆盖关键矩阵 `latest`（rc.2）与 `next`（rc.4）；相邻发行按 API 兼容默认成立，不逐版穷举。`DSH_TEST_RUNTIME_VERSION` 防止误用祖先目录提供的另一版 SDK，`DSH_TEST_ZOD_VERSION` 可进一步要求实际 provider 的精确版本。夹具的 override 不代表完整 CLI 依赖拓扑；测试不启动服务器、不调用模型、不读写用户 profile。
+- 按 [CI 矩阵](./.github/workflows/ci.yml) 只覆盖关键矩阵 `latest`（rc.2）与 `next`（rc.5）；相邻发行按 API 兼容默认成立，不逐版穷举。`DSH_TEST_RUNTIME_VERSION` 防止误用祖先目录提供的另一版 SDK，`DSH_TEST_ZOD_VERSION` 可进一步要求实际 provider 的精确版本。夹具的 override 不代表完整 CLI 依赖拓扑；测试不启动服务器、不调用模型、不读写用户 profile。
 - 也可将该变量设为另一个已确认 DSH 安装的绝对目录（仅接受关键矩阵发行版，集成测试会校验实际版本与 provider）。对 DSH CLI 安装，测试入口按真实 `createRuntimeResolution` 的安装依赖闭包构造隔离测试视图，而不将普通 Node 根解析误作宿主 provider。仅运行 `pnpm test` 时部分集成检查会 skipped，必须如实报告，不能当完整通过。
 - [运行时测试入口](./scripts/test-runtime.js) 将源码或最终制品的运行文件复制到无自身 node_modules 的临时 payload，其父级仅提供所选真实 SDK 的公共 peer，完整功能测试不得回落到根开发 SDK 的另一版 peer；临时夹具在退出时清理，不修改 SDK 安装。[peer 测试](./test/peers.test.js) 检查生产 manifest 契约、功能 payload 的真实路径与 ESM 类身份，并用真实宿主解析器验证外部 link 的 provider 选择；[profile peer 测试](./test/profile-peers.test.js) 覆盖普通安装时 profile 本地副本优先及核心运行、历史查询链路。别用原位开发依赖或只导入模块掩盖完整功能链中的混版。
 - 纯 formatter VM 检查不等于 React 或 GUI 测试。UI 变化须在真实宿主检查交互、主题、键盘/焦点和错误状态，并恢复改动的用户设置、归档测试会话、关闭测试浏览器。
@@ -136,7 +136,7 @@ DSH_TEST_PLUGIN_DIR="$pack_dir/unpacked/package" pnpm run test:runtime
 
 [分发清单](./package.json) 必须包含运行 JS 引用的生产声明文件；不打包测试声明、编译负例、SDK 开发依赖或本机产物。原创图标和中英文元数据随包分发。
 
-[CI](./.github/workflows/ci.yml) 定义 Node 22/24 与关键 SDK 矩阵（解析后的 `latest` rc.2、`next` rc.4），并执行冻结锁安装、语法、类型、源码集成、打包与制品集成检查。保持：
+[CI](./.github/workflows/ci.yml) 定义 Node 22/24 与关键 SDK 矩阵（解析后的 `latest` rc.2、`next` rc.5），并执行冻结锁安装、语法、类型、源码集成、打包与制品集成检查。保持：
 
 - 依赖脚本禁用、Actions 固定完整 SHA、`contents: read`、checkout 不保留凭据；无自动发布或部署。
 - Bash `pipefail` 保证 `node --test | tee` 不吞失败；任何 skipped 检查使 CI 失败。
