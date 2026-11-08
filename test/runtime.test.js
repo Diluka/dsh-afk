@@ -18,8 +18,8 @@ const load = async name => {
 };
 
 test('isolated installed DSH: real command/projection/tool/scope pipeline, custom replies, policy and disposal', { skip: !runtime }, async () => {
-  const [{ Context }, { default: SystemPrompt }, { default: Tools }, { default: Sessions, Session }, { default: Agents }, { default: Commands }, { default: Projections }, { default: UserQuestions }, ask, { createScope, bindScopeParent }, { default: Typert }] = await Promise.all([
-    load('@deepseek-ai/cordis'), load('@deepseek-ai/dsh-system-prompt'), load('@deepseek-ai/dsh-tools'),
+  const [{ Context }, { default: SystemPrompt }, { default: Tools }, nativeExecutor, { default: Sessions, Session }, { default: Agents }, { default: Commands }, { default: Projections }, { default: UserQuestions }, ask, { createScope, bindScopeParent }, { default: Typert }] = await Promise.all([
+    load('@deepseek-ai/cordis'), load('@deepseek-ai/dsh-system-prompt'), load('@deepseek-ai/dsh-tools'), load('@deepseek-ai/dsh-tool-executor-native'),
     load('@deepseek-ai/dsh-session'), load('@deepseek-ai/dsh-agent'), load('@deepseek-ai/dsh-commands'),
     load('@deepseek-ai/dsh-session-projection'), load('@deepseek-ai/dsh-user-questions'), load('@deepseek-ai/dsh-tool-ask-user'), load('@deepseek-ai/dsh-scope'), load('@deepseek-ai/dsh-typert-registry'),
   ]);
@@ -34,6 +34,7 @@ test('isolated installed DSH: real command/projection/tool/scope pipeline, custo
   const registers = [];
   try {
     for (const service of [Typert, SystemPrompt, Tools, Sessions, Agents, Commands, Projections, UserQuestions]) fibers.push(await ctx.plugin(service));
+    fibers.push(await ctx.plugin(nativeExecutor));
     let humanRequests = 0;
     ctx.on('user-questions/request', async request => {
       humanRequests++;
@@ -52,11 +53,11 @@ test('isolated installed DSH: real command/projection/tool/scope pipeline, custo
     registers.push(await ctx.agents.register(agent));
     const fiber = await ctx.plugin(afk); // Also verifies attaching to an already-existing agent.
     fibers.push(fiber);
-    /** @param {import('@deepseek-ai/dsh-session').Session} [session] */
+    /** @param {import('@deepseek-ai/dsh-session').Session} [session] @returns {import('../types/afk.js').AfkState} */
     const stateOf = (session = agent.session) => {
-      const state = ctx.sessionProjections.stateOf(session, 'dsh-afk');
-      assert.ok(state);
-      return state;
+      const row = ctx.sessionProjections.checkpoint(session)['dsh-afk'];
+      assert.ok(row);
+      return /** @type {import('../types/afk.js').AfkState} */ (row.val);
     };
     /** @param {import('../types/afk.js').AfkSettings} settings */
     const config = async settings => {
@@ -76,7 +77,11 @@ test('isolated installed DSH: real command/projection/tool/scope pipeline, custo
     const execute = async (name = /** @type {K} */ ('ask_user_question'), args = { questions }, callerSignal = new AbortController().signal) => {
       const callId = /** @type {import('@deepseek-ai/dsh-llm').ToolCallId} */ (`fixture-call-${++seq}`);
       agent.session.append('tool/call', { turn: 1, step: seq, callId, name, arguments: JSON.stringify(args) });
-      const result = await ctx.tools.execute({ callId, name, arguments: args, agent, signal: callerSignal });
+      const batch = await ctx.tools.execute({
+        calls: [{ type: 'tool-call', id: callId, name, arguments: JSON.stringify(args) }],
+        agent, signal: callerSignal,
+      });
+      const result = batch.results[0].result;
       agent.session.append('tool/result', {
         turn: 1, step: seq,
         message: { id: /** @type {import('@deepseek-ai/dsh-llm').MessageId} */ (`fixture-result-${seq}`), role: 'tool', source: { kind: 'tool', callId }, toolCallId: callId, content: result.content, isError: result.isError },
@@ -239,7 +244,7 @@ test('isolated installed DSH: real command/projection/tool/scope pipeline, custo
     await config({ enabled: true, mode: 'disable-ask', reply });
     await fiber.dispose();
     assert.ok(ctx.tools.get('ask_user_question', agent), 'unload must lift the agent restriction');
-    assert.equal(ctx.sessionProjections.stateOf(agent.session, 'dsh-afk'), undefined);
+    assert.deepEqual(ctx.sessionProjections.snapshot(agent.session, ['dsh-afk']).values, {});
     assert.equal(ctx.commands.find(agent, 'afk'), undefined);
     assert.equal(ctx.tools.get('afk_history', agent), undefined);
     assert.equal(ctx.tools.get('afk_mark_read', agent), undefined);

@@ -10,6 +10,7 @@ import vm from 'node:vm';
 /** @import { InvocationDescriptor, PeerScope, TypertRemoteContribution } from '@deepseek-ai/dsh-typert-protocol' */
 /** @import { HistoryAddress, HistoryQuery, HistoryRemote } from '../types/history.js' */
 /** @typedef {Omit<import('../types/test.js').FixtureHostContext, 'remoteAccess'> & {remoteAccess: import('@deepseek-ai/dsh-api-remote-access').RemoteAccessService}} HistoryHost */
+/** @typedef {import('@deepseek-ai/dsh-session-projection').ProjectionHandle<import('../types/afk.js').AfkState>} AfkProjectionHandle */
 
 const runtime = process.env.DSH_TEST_RUNTIME_DIR;
 /** @type {import('../types/test.js').RuntimeLoader} */
@@ -82,13 +83,19 @@ async function fixture(t) {
     for (const fiber of fibers.reverse()) await fiber.dispose();
   });
   for (const service of [HostRegistry, Sessions, Projections, RemoteAccess, Gateway]) fibers.push(await host.plugin(service));
-  /** @type {(() => void) | undefined} */
-  let unregisterProjection;
+  /** @type {AfkProjectionHandle | undefined} */
+  let registeredProjection;
   const historyFiber = await host.plugin({
     name: 'history-query-subject', inject: ['typert', 'sessions', 'sessionProjections'],
-    async apply(ctx) { unregisterProjection = ctx.sessionProjections.register(state.projection); await history.registerHistory(ctx); },
+    async apply(ctx) {
+      const projection = await ctx.sessionProjections.register(state.projection);
+      registeredProjection = projection;
+      await history.registerHistory(ctx, projection);
+    },
   });
-  assert.ok(unregisterProjection);
+  /** @type {AfkProjectionHandle} */
+  const projectionHandle = /** @type {AfkProjectionHandle} */ (/** @type {unknown} */ (registeredProjection));
+  const unregisterProjection = () => projectionHandle.dispose();
   fibers.push(historyFiber);
 
   // Admission and network IO only: all authorization, lookup, dispatch,
@@ -158,7 +165,7 @@ async function fixture(t) {
   // Materialize before taking the immutability baseline.
   const snapshot = () => [a, b].map(session => ({
     id: session.id, seq: session.seq, events: session.snapshotEvents(),
-    projection: structuredClone(host.sessionProjections.stateOf(session, state.KEY)),
+    projection: structuredClone(projectionHandle.stateOf(session)),
     checkpoint: host.sessionProjections.checkpoint(session),
   }));
   const before = structuredClone(snapshot());
@@ -176,7 +183,7 @@ async function fixture(t) {
     if (descriptor.result.mode === 'strict') descriptor.result.create().parse(result.value);
     return result.value;
   };
-  return { host, client, a, b, handle, descriptor, calls, historyFiber, unmountHistory, unregisterProjection, disposers, peer,
+  return { host, client, a, b, handle, descriptor, calls, historyFiber, unmountHistory, projectionHandle, unregisterProjection, disposers, peer,
     snapshot, before, events, read,
     /** @param {typeof gate} next */ setGate(next) { gate = next; },
     /** @param {typeof rewriteResult} next */ setResultTransform(next) { rewriteResult = next; },
@@ -187,7 +194,7 @@ async function fixture(t) {
 
 test('history Remote: live paging/filter/session isolation changes no event, revision or read state', { skip: !runtime }, async t => {
   const f = await fixture(t);
-  const originalState = f.host.sessionProjections.stateOf(f.a, state.KEY);
+  const originalState = f.projectionHandle.stateOf(f.a);
   const first = await f.read(f.a.id, { offset: 0, limit: 1, filter: 'unread' });
   assert.deepEqual({ total: first.total, totalAll: first.totalAll, unread: first.unread }, { total: 2, totalAll: 3, unread: 2 });
   assert.equal(first.records[0].questions[0].id, 'a-newest');
@@ -203,7 +210,7 @@ test('history Remote: live paging/filter/session isolation changes no event, rev
   first.records[0].questions[0].question = 'Client-local edit';
   first.records[0].read = true;
   assert.equal((await f.read(f.a.id, { offset: 0, limit: 20, filter: 'unread' })).records[0].questions[0].question, 'Fixture a-newest?');
-  assert.strictEqual(f.host.sessionProjections.stateOf(f.a, state.KEY), originalState);
+  assert.strictEqual(f.projectionHandle.stateOf(f.a), originalState);
   assert.deepEqual(f.snapshot(), f.before);
   assert.deepEqual(f.events, [], 'all Session event types, not only command events, must remain absent');
   assert.equal(f.host.get('agents'), undefined, 'no Agent service or Agent-restoring lookup was needed');
@@ -228,7 +235,7 @@ test('history Remote: non-owner grant for A rejects B before address lookup or S
   assert.equal((await f.read(f.a.id, query)).totalAll, 3, 'a dedicated history grant needs no commands/execute permission');
   assert.deepEqual(lookedUp, [f.a.id]);
   const sessionReads = t.mock.method(f.host.sessions, 'get');
-  const projectionReads = t.mock.method(f.host.sessionProjections, 'stateOf');
+  const projectionReads = t.mock.method(f.projectionHandle, 'stateOf');
   const denied = await f.handle.history(f.b.id, query);
   assert.equal(denied.ok, false);
   assert.ok(!denied.ok);
@@ -495,7 +502,7 @@ test('history Remote: cold lookup denial precedes storage IO and cold cancellati
 test('history Remote: cold failure after observation still disposes its acquired lease', { skip: !runtime }, async t => {
   const f = await fixture(t);
   const cold = await coldStorage(f);
-  f.unregisterProjection();
+  await f.unregisterProjection();
   const failed = await f.handle.history(cold.a.id, { offset: 0, limit: 20, filter: 'all' });
   assert.ok(!failed.ok);
   assert.equal(failed.error.code, 'afk-history/unavailable');

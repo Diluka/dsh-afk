@@ -4,7 +4,7 @@
 /** @import { InvocationDescriptor } from '@deepseek-ai/dsh-typert-protocol' */
 /** @import { HistoryAddress, HistoryQuery } from './types/history.js' */
 /** @import { HistoryReader } from './types/host.js' */
-/** @import { AfkHistory } from './types/afk.js' */
+/** @import { AfkHistory, AfkState } from './types/afk.js' */
 import { TypertRemoteService, RemoteError } from '@deepseek-ai/dsh-typert-protocol';
 import { z } from 'zod';
 import { KEY, recordSchema, historyOf } from './state.js';
@@ -35,9 +35,10 @@ export const historyDescriptor = {
 /** @implements {HistoryReader} */
 export class AfkHistoryService extends TypertRemoteService {
   static inject = ['sessions', 'sessionProjections'];
-  /** @param {Context} ctx */
-  constructor(ctx) {
+  /** @param {Context} ctx @param {import('@deepseek-ai/dsh-session-projection').ProjectionHandle<AfkState>} projection */
+  constructor(ctx, projection) {
     super(ctx, 'afkHistory');
+    this.projection = projection;
     // The SDK augments the same Context name for Host and Client sessions; this
     // injected Host service is the real SessionStore, never the Client facade.
     this.sessions = /** @type {import('@deepseek-ai/dsh-session').SessionStore} */ (/** @type {unknown} */ (ctx.sessions));
@@ -52,8 +53,7 @@ export class AfkHistoryService extends TypertRemoteService {
     const { offset, limit, filter } = query;
     const live = this.sessions.get(address.sessionId);
     if (live) {
-      const state = this.ctx.sessionProjections.stateOf(live, KEY);
-      if (!state) throw new RemoteError('afk-history/unavailable', 'AFK history is unavailable', {});
+      const state = this.projection.stateOf(live);
       return structuredClone(historyOf(state, offset, limit, filter));
     }
     // Cold reads use the Host observation/restore APIs, never the Agent-restoring lookup.
@@ -76,8 +76,11 @@ export class AfkHistoryService extends TypertRemoteService {
   }
 }
 
-/** @param {Context} ctx */
-export async function registerHistory(ctx) {
+/**
+ * @param {Context} ctx
+ * @param {import('@deepseek-ai/dsh-session-projection').ProjectionHandle<AfkState>} projection
+ */
+export async function registerHistory(ctx, projection) {
   ctx.typert.lookups.register('afkHistoryAddress', {
     parameter: 'afkAddress', wire: 'sessionId', resource: 'session',
     hostTypeSymbol: 'dsh-afk#HistoryAddress', wireTypeSymbol: '@deepseek-ai/dsh-session/types#SessionId',
@@ -87,5 +90,5 @@ export async function registerHistory(ctx) {
     package: 'dsh-afk', face: 'host', schemas: [], model: { services: [], events: [], objects: [] },
     invocations: [historyDescriptor],
   });
-  await ctx.plugin(AfkHistoryService);
+  await ctx.plugin(AfkHistoryService, projection);
 }

@@ -11,6 +11,7 @@ export interface RuntimeModules {
   '@deepseek-ai/cordis-plugin-loader': typeof import('@deepseek-ai/cordis-plugin-loader');
   '@deepseek-ai/dsh-system-prompt': typeof import('@deepseek-ai/dsh-system-prompt');
   '@deepseek-ai/dsh-tools': typeof import('@deepseek-ai/dsh-tools');
+  '@deepseek-ai/dsh-tool-executor-native': typeof import('@deepseek-ai/dsh-tool-executor-native');
   '@deepseek-ai/dsh-session': typeof import('@deepseek-ai/dsh-session');
   '@deepseek-ai/dsh-agent': typeof import('@deepseek-ai/dsh-agent');
   '@deepseek-ai/dsh-commands': typeof import('@deepseek-ai/dsh-commands');

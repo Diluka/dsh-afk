@@ -8,14 +8,14 @@ import { tmpdir } from 'node:os';
 
 const sourceDir = process.env.DSH_TEST_PLUGIN_DIR ?? fileURLToPath(new URL('..', import.meta.url));
 const runtime = process.env.DSH_TEST_RUNTIME_DIR;
-// CI exercises the resolved `latest` and `next` releases. Adjacent releases in
-// the declared compatibility range are assumed API-compatible, not enumerated.
-const verifiedReleases = ['0.2.1-rc.2', '0.2.1-rc.5'];
-const compatibilityRange = '>=0.2.1-alpha.3 <=0.2.1-rc.5';
+// CI exercises the resolved `latest` and `next` releases; both currently resolve
+// to 0.2.2-rc.1, so one release is validated per Node version.
+const verifiedReleases = ['0.2.2-rc.1'];
+const compatibilityRange = '>=0.2.2-rc.1 <=0.2.2-rc.1';
 const requiredPeers = { '@deepseek-ai/dsh-typert-protocol': compatibilityRange,
-  '@deepseek-ai/schemastery': '3.18.5-alpha.2 || 3.18.5', zod: '4.4.3 || 4.6.7' };
-const developmentPeers = { '@deepseek-ai/dsh-typert-protocol': '0.2.1-rc.5',
-  '@deepseek-ai/schemastery': '3.18.5', zod: '4.6.7' };
+  '@deepseek-ai/schemastery': '3.19.0', zod: '4.4.3 || 4.6.7' };
+const developmentPeers = { '@deepseek-ai/dsh-typert-protocol': '0.2.2-rc.1',
+  '@deepseek-ai/schemastery': '3.19.0', zod: '4.6.7' };
 
 /** @param {unknown} value @returns {Record<string, unknown>} */
 function record(value) {
@@ -93,8 +93,8 @@ test('real Host compatibility gates admit the declared boundary and verified rel
   await runtimeVersionOf(runtimeRequire);
   const { evaluatePluginCompatibility } = /** @type {typeof import('@deepseek-ai/dsh-app-boot')} */ (await import(pathToFileURL(runtimeRequire.resolve('@deepseek-ai/dsh-app-boot')).href));
   const manifest = await manifestOf(join(sourceDir, 'package.json'));
-  for (const version of ['0.2.1-alpha.3', ...verifiedReleases]) assert.equal(evaluatePluginCompatibility(manifest, {}, version), undefined);
-  for (const version of ['0.1.7-rc.2', '0.2.0-rc.2', '0.2.1-alpha.2', '0.2.1-rc.6', '0.2.1', '0.3.0']) {
+  for (const version of verifiedReleases) assert.equal(evaluatePluginCompatibility(manifest, {}, version), undefined);
+  for (const version of ['0.1.7-rc.2', '0.2.0-rc.2', '0.2.1-alpha.3', '0.2.1-rc.2', '0.2.1-rc.5', '0.2.2-alpha.3', '0.2.2', '0.3.0']) {
     const issue = evaluatePluginCompatibility(manifest, {}, version);
     assert.ok(issue, `${version} must remain unsupported`);
     assert.equal(issue.exempted, false);
