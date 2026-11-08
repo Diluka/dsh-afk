@@ -70,7 +70,4 @@ declare module '@deepseek-ai/dsh-session-projection/types' {
   interface SessionProjectionMap {
     'dsh-afk': AfkView;
   }
-  interface SessionProjectionStateMap {
-    'dsh-afk': AfkState;
-  }
 }

@@ -64,12 +64,13 @@ test('real volatile Settings persist atomically without remount; scope controls 
     { Context }, { default: Loader }, { default: SystemPrompt }, { default: Tools },
     { default: Sessions }, { default: Agents }, { default: Commands }, { default: Projections },
     { default: UserQuestions }, ask, { createScope }, { default: ConfigEditor },
-    { default: Settings }, { mountRootInclude, readProfilePatches }, { createUserMessage }, { default: Typert },
+    { default: Settings }, { mountRootInclude, readProfilePatches }, { createUserMessage }, { default: Typert }, nativeExecutor,
   ] = await Promise.all([
     load('@deepseek-ai/cordis'), load('@deepseek-ai/cordis-plugin-loader'), load('@deepseek-ai/dsh-system-prompt'), load('@deepseek-ai/dsh-tools'),
     load('@deepseek-ai/dsh-session'), load('@deepseek-ai/dsh-agent'), load('@deepseek-ai/dsh-commands'), load('@deepseek-ai/dsh-session-projection'),
     load('@deepseek-ai/dsh-user-questions'), load('@deepseek-ai/dsh-tool-ask-user'), load('@deepseek-ai/dsh-scope'), load('@deepseek-ai/dsh-config-editor'),
     load('@deepseek-ai/dsh-settings'), load('@deepseek-ai/dsh-app-boot'), load('@deepseek-ai/dsh-llm'), load('@deepseek-ai/dsh-typert-registry'),
+    load('@deepseek-ai/dsh-tool-executor-native'),
   ]);
   const dir = await mkdtemp(join(resolve(tmpdir()), 'dsh-afk-scope-'));
   const home = join(dir, 'home');
@@ -93,6 +94,7 @@ test('real volatile Settings persist atomically without remount; scope controls 
     ctx.baseUrl = pathToFileURL(dir + '/').href;
     ctx.provide('profileContext', profile);
     for (const service of [Loader, Typert, SystemPrompt, Tools, Sessions, Agents, Commands, Projections, UserQuestions]) await ctx.plugin(service);
+    await ctx.plugin(nativeExecutor);
     await ctx.plugin(ask);
     let humanRequests = 0;
     ctx.on('user-questions/request', async request => {
@@ -120,7 +122,7 @@ test('real volatile Settings persist atomically without remount; scope controls 
     assert.ok(entry.fiber);
     assert.equal(entry.fiber.state, 2);
     const fiber = entry.fiber;
-    const refs = /** @type {ReturnType<typeof Config>} */ (/** @type {unknown} */ (fiber.config)); // This entry's real Config constructed these stable references.
+    const refs = /** @type {ReturnType<typeof Config>} */ (/** @type {unknown} */ (fiber.effectiveConfig)); // This entry's real Config constructed these stable references.
     await ctx.plugin(ConfigEditor);
     await ctx.plugin(Settings);
     const document = () => {
@@ -153,11 +155,11 @@ test('real volatile Settings persist atomically without remount; scope controls 
     await success(b, `set ${JSON.stringify(localB)}`);
     assert.equal(ctx.tools.get('ask_user_question', a), undefined);
     assert.ok(ctx.tools.get('ask_user_question', b));
-    /** @param {import('@deepseek-ai/dsh-agent').Agent} agent */
+    /** @param {import('@deepseek-ai/dsh-agent').Agent} agent @returns {import('../types/afk.js').AfkState} */
     const projectionOf = agent => {
-      const state = ctx.sessionProjections.stateOf(agent.session, 'dsh-afk');
-      assert.ok(state);
-      return state;
+      const row = ctx.sessionProjections.checkpoint(agent.session)['dsh-afk'];
+      assert.ok(row);
+      return /** @type {import('../types/afk.js').AfkState} */ (row.val);
     };
     /** @param {import('@deepseek-ai/dsh-agent').Agent} agent */
     const viewBefore = agent => ({ ...projectionOf(agent).view });
@@ -174,7 +176,7 @@ test('real volatile Settings persist atomically without remount; scope controls 
       const after = document();
       assert.ok(after.revision > before.revision);
       assert.equal(entry.fiber, fiber, 'volatile settings must not remount AFK');
-      const currentRefs = /** @type {ReturnType<typeof Config>} */ (/** @type {unknown} */ (fiber.config));
+      const currentRefs = /** @type {ReturnType<typeof Config>} */ (/** @type {unknown} */ (fiber.effectiveConfig));
       assert.equal(currentRefs.scope, refs.scope, 'scope reference identity remains stable');
       assert.equal(currentRefs.global, refs.global, 'global reference identity remains stable');
       assert.equal(currentRefs.toolsEnabled, refs.toolsEnabled, 'tool-toggle reference identity remains stable');
@@ -227,7 +229,7 @@ test('real volatile Settings persist atomically without remount; scope controls 
       const callId = /** @type {import('@deepseek-ai/dsh-llm').ToolCallId} */ (`${agent.id}:call:${++serial}`);
       agent.session.append('tool/call', { turn: 1, step: serial, callId, name, arguments: JSON.stringify(args) });
       if (beforeResult) await beforeResult();
-      const result = await ctx.tools.execute({ callId, name, arguments: args, agent, signal: signal() });
+      const result = (await ctx.tools.execute({ calls: [{ type: 'tool-call', id: callId, name, arguments: JSON.stringify(args) }], agent, signal: signal() })).results[0].result;
       agent.session.append('tool/result', { turn: 1, step: serial, message: { id: /** @type {import('@deepseek-ai/dsh-llm').MessageId} */ (`${callId}:result`), role: 'tool', source: { kind: 'tool', callId }, toolCallId: callId, content: result.content, isError: result.isError }, ...(result.meta === undefined ? {} : { meta: result.meta }) }, { surfaceOp: 'append' });
       return /** @type {import('../types/test.js').FixtureToolResult<K>} */ (/** @type {unknown} */ (result));
     };
@@ -300,7 +302,7 @@ test('real volatile Settings persist atomically without remount; scope controls 
     }
     for (const name of ['afk_history', 'afk_mark_read']) {
       assert.equal(ctx.tools.get(name), undefined, 'tools are unregistered, not only hidden from one agent');
-      const result = await ctx.tools.execute({ callId: /** @type {import('@deepseek-ai/dsh-llm').ToolCallId} */ (`disabled-${name}`), name, arguments: {}, agent: b, signal: signal() });
+      const result = (await ctx.tools.execute({ calls: [{ type: 'tool-call', id: /** @type {import('@deepseek-ai/dsh-llm').ToolCallId} */ (`disabled-${name}`), name, arguments: '{}' }], agent: b, signal: signal() })).results[0].result;
       assert.equal(result.isError, true);
       assert.equal(result.error?.info?.code, 'UNKNOWN_TOOL', 'a stale model call cannot execute a disabled tool');
     }
@@ -388,7 +390,7 @@ test('real volatile Settings persist atomically without remount; scope controls 
     assert.equal(ctx.commands.find(a, 'afk'), undefined);
     assert.equal(ctx.tools.get('afk_history', a), undefined);
     assert.equal(ctx.tools.get('afk_mark_read', a), undefined);
-    assert.equal(ctx.sessionProjections.stateOf(a.session, 'dsh-afk'), undefined);
+    assert.deepEqual(ctx.sessionProjections.snapshot(a.session, ['dsh-afk']).values, {});
     assert.equal((await ctx.systemPrompt.assemble({ scope: a })).contexts.some(row => row.name === 'dsh-afk'), false);
     // A fresh Host reads the actual persisted patch, not the former entry's memory.
     const next = new Context();
@@ -401,6 +403,7 @@ test('real volatile Settings persist atomically without remount; scope controls 
       next.baseUrl = pathToFileURL(dir + '/').href;
       next.provide('profileContext', profile);
       for (const service of [Loader, Typert, SystemPrompt, Tools, Sessions, Agents, Commands, Projections, UserQuestions]) await next.plugin(service);
+      await next.plugin(nativeExecutor);
       await next.plugin(ask);
       const reloaded = await mountRootInclude(next, basePath, readProfilePatches('dsh', profile), pathToFileURL(join(runtime, 'package.json')).href);
       await next.loader.await();

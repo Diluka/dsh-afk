@@ -28,11 +28,11 @@ export async function apply(ctx, suppliedConfig) {
   ctx.inject(['settings'], scoped => {
     scoped.effect(() => scoped.settings.configure({ auto: false }, owner));
   });
-  ctx.sessionProjections.register(projection);
-  await registerHistory(ctx);
+  const projectionHandle = await ctx.sessionProjections.register(projection);
+  await registerHistory(ctx, projectionHandle);
   /** @param {HostAgent | undefined} agent @returns {AfkState} */
   const stateOf = agent => {
-    const state = agent && ctx.sessionProjections.stateOf(agent.session, KEY);
+    const state = agent && projectionHandle.stateOf(agent.session);
     if (!state) throw new Error('AFK state is unavailable for this session');
     return state;
   };

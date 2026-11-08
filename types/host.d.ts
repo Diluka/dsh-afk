@@ -2,11 +2,12 @@ import type { Context, Fiber } from '@deepseek-ai/cordis';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import type { ToolResult } from '@deepseek-ai/dsh-tools';
 import type { ProjectionDefinition } from '@deepseek-ai/dsh-session-projection';
-import type { AfkScope, AfkSettings, AfkHistory } from './afk.d.ts';
+import type { AfkScope, AfkSettings, AfkHistory, AfkState } from './afk.d.ts';
 import type { SessionId } from '@deepseek-ai/dsh-session';
 import type { TypertLookup } from '@deepseek-ai/dsh-typert-protocol';
 import type { HistoryAddress, HistoryQuery } from './history.d.ts';
 // Include the SDK's Host declaration augmentations.
+import '@deepseek-ai/dsh-tool-executor-ptc/types';
 import '@deepseek-ai/schemastery';
 import '@deepseek-ai/cordis-plugin-loader';
 import '@deepseek-ai/dsh-commands';
@@ -51,6 +52,6 @@ export type AgentEffects = {
 /** Final Session results may omit isError for successful native messages. */
 export type LoggedToolResult = Pick<ToolResult, 'meta'> & { content: Readonly<ToolResult['content']>; isError?: boolean };
 export type LogCoordinates = { seq: number; time: number };
-export type AfkProjection = ProjectionDefinition<'dsh-afk'> & {
-  wire: NonNullable<ProjectionDefinition<'dsh-afk'>['wire']>;
+export type AfkProjection = ProjectionDefinition<'dsh-afk', AfkState> & {
+  wire: NonNullable<ProjectionDefinition<'dsh-afk', AfkState>['wire']>;
 };
