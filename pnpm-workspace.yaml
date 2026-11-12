@@ -1,4 +1,5 @@
-packages: []
+packages:
+  - test/fixtures/runtime-next
 
 autoInstallPeers: false
 
@@ -7,6 +8,7 @@ hoistPattern:
   - '*'
   - '!@deepseek-ai/dsh-*'
 
-# Align the current SDK declarations with the next release's Zod provider.
+# Align only rc.1 projection declarations with its selected Zod provider.
+# rc.2 already declares its own exact Zod 4.6.6; do not override that fixture.
 overrides:
   '@deepseek-ai/dsh-session-projection@0.2.2-rc.1>zod': 4.6.7

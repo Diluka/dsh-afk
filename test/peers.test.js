@@ -8,12 +8,11 @@ import { tmpdir } from 'node:os';
 
 const sourceDir = process.env.DSH_TEST_PLUGIN_DIR ?? fileURLToPath(new URL('..', import.meta.url));
 const runtime = process.env.DSH_TEST_RUNTIME_DIR;
-// CI exercises the resolved `latest` and `next` releases; both currently resolve
-// to 0.2.2-rc.1, so one release is validated per Node version.
-const verifiedReleases = ['0.2.2-rc.1'];
-const compatibilityRange = '>=0.2.2-rc.1 <=0.2.2-rc.1';
+// CI exercises the exact resolved `latest` and `next` SDKs independently.
+const verifiedReleases = ['0.2.2-rc.1', '0.2.2-rc.2'];
+const compatibilityRange = '>=0.2.2-rc.1 <=0.2.2-rc.2';
 const requiredPeers = { '@deepseek-ai/dsh-typert-protocol': compatibilityRange,
-  '@deepseek-ai/schemastery': '3.19.0', zod: '4.4.3 || 4.6.7' };
+  '@deepseek-ai/schemastery': '3.19.0', zod: '4.4.3 || 4.6.6 || 4.6.7' };
 const developmentPeers = { '@deepseek-ai/dsh-typert-protocol': '0.2.2-rc.1',
   '@deepseek-ai/schemastery': '3.19.0', zod: '4.6.7' };
 
@@ -80,7 +79,7 @@ test('functional integration payload shares the selected real SDK peer providers
     assert.equal(await realpath(pluginRequire.resolve(name)), await realpath(runtimeRequire.resolve(name)), `${name} must use the selected Host provider during functional tests`);
   }
   const zodVersion = (await manifestOf(runtimeRequire.resolve('zod/package.json'))).version;
-  assert.ok(zodVersion === '4.4.3' || zodVersion === '4.6.7', 'the selected Host must provide a supported Zod');
+  assert.ok(zodVersion === '4.4.3' || zodVersion === '4.6.6' || zodVersion === '4.6.7', 'the selected Host must provide a supported Zod');
   if (process.env.DSH_TEST_ZOD_VERSION) assert.equal(zodVersion, process.env.DSH_TEST_ZOD_VERSION, 'the selected Host must exercise the requested Zod version');
   const { AfkHistoryService } = /** @type {typeof import('../history.js')} */ (await import(pathToFileURL(join(sourceDir, 'history.js')).href));
   const { TypertRemoteService } = /** @type {typeof import('@deepseek-ai/dsh-typert-protocol')} */ (await import(pathToFileURL(runtimeRequire.resolve('@deepseek-ai/dsh-typert-protocol')).href));
@@ -94,7 +93,7 @@ test('real Host compatibility gates admit the declared boundary and verified rel
   const { evaluatePluginCompatibility } = /** @type {typeof import('@deepseek-ai/dsh-app-boot')} */ (await import(pathToFileURL(runtimeRequire.resolve('@deepseek-ai/dsh-app-boot')).href));
   const manifest = await manifestOf(join(sourceDir, 'package.json'));
   for (const version of verifiedReleases) assert.equal(evaluatePluginCompatibility(manifest, {}, version), undefined);
-  for (const version of ['0.1.7-rc.2', '0.2.0-rc.2', '0.2.1-alpha.3', '0.2.1-rc.2', '0.2.1-rc.5', '0.2.2-alpha.3', '0.2.2', '0.3.0']) {
+  for (const version of ['0.1.7-rc.2', '0.2.0-rc.2', '0.2.1-alpha.3', '0.2.1-rc.2', '0.2.1-rc.5', '0.2.2-alpha.3', '0.2.2-rc.3', '0.2.2', '0.3.0']) {
     const issue = evaluatePluginCompatibility(manifest, {}, version);
     assert.ok(issue, `${version} must remain unsupported`);
     assert.equal(issue.exempted, false);
