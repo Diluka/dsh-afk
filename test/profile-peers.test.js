@@ -26,20 +26,20 @@ async function versionOf(directory) {
 }
 
 /**
- * The workspace install carries both Zod minors: the root provider, plus each SDK
- * package's exact 4.4.3 pin. Select a physically distinct provider from the one
- * the selected Host resolves, so profile-local precedence is observable.
+ * The workspace carries the root Zod 4.6.7 provider and SDK pins 4.4.3/4.6.6.
+ * Select a physically distinct provider from the one the selected Host resolves,
+ * so profile-local precedence is observable.
  * @param {string} hostVersion
  */
 async function alternateZod(hostVersion) {
-  assert.ok(hostVersion === '4.4.3' || hostVersion === '4.6.7', 'the selected Host must provide a supported Zod');
+  assert.ok(hostVersion === '4.4.3' || hostVersion === '4.6.6' || hostVersion === '4.6.7', 'the selected Host must provide a supported Zod');
   const workspaceRequire = createRequire(join(workspace, 'package.json'));
   const sdkRequire = createRequire(workspaceRequire.resolve('@deepseek-ai/dsh-agent/package.json'));
   for (const candidate of [workspaceRequire.resolve('zod/package.json'), sdkRequire.resolve('zod/package.json')]) {
     const directory = await realpath(dirname(candidate));
     if (await versionOf(directory) !== hostVersion) return directory;
   }
-  throw new Error('the workspace install must provide both supported Zod minors for the profile-peer fixture');
+  throw new Error('the workspace install must provide an alternate supported Zod for the profile-peer fixture');
 }
 
 /**
@@ -103,7 +103,8 @@ async function exerciseFixture() {
   assert.equal((await lstat(pluginDir)).isSymbolicLink(), false);
   const hostZodVersion = await versionOf(dirname(hostRequire.resolve('zod/package.json')));
   const localZodVersion = await versionOf(join(profileDir, 'node_modules', 'zod'));
-  assert.deepEqual(new Set([hostZodVersion, localZodVersion]), new Set(['4.4.3', '4.6.7']));
+  assert.equal(localZodVersion, hostZodVersion === '4.6.7' ? '4.4.3' : '4.6.7');
+  assert.notEqual(localZodVersion, hostZodVersion, 'profile precedence must exercise a different supported version');
   if (process.env.DSH_TEST_ZOD_VERSION) assert.equal(hostZodVersion, process.env.DSH_TEST_ZOD_VERSION);
   // Test actual ESM classes, not only require.resolve (Zod and Schemastery
   // expose separate CommonJS entry points).

@@ -26,10 +26,13 @@ jobs:
       matrix:
         node: ['22.x', '24.x']
         dsh:
-          # npm latest and next currently resolve to the same release; validate it once per Node version.
+          # Pin the resolved npm latest and next SDKs and their actual Zod providers.
           - version: '0.2.2-rc.1'
             directory: '.'
             zod: '4.6.7'
+          - version: '0.2.2-rc.2'
+            directory: 'test/fixtures/runtime-next'
+            zod: '4.6.6'
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -63,11 +66,33 @@ jobs:
           mkdir -p artifacts/unpacked
           pnpm pack --out artifacts/dsh-afk-ci.tgz
           tar -xzf artifacts/dsh-afk-ci.tgz -C artifacts/unpacked
-          node --input-type=module -e "import { readFile, access } from 'node:fs/promises'; const p=JSON.parse(await readFile('artifacts/unpacked/package/package.json','utf8')); for(const f of ['index.js','state.js','config.js','history.js','client.js','icon.svg','locale/en.json','locale/zh.json','types/afk.d.ts','types/host.d.ts','types/client.d.ts','types/history.d.ts']) await access('artifacts/unpacked/package/'+f); if(p.engines.dsh!=='>=0.2.2-rc.1 <=0.2.2-rc.1') throw new Error('Unexpected compatibility target');"
+          node --input-type=module -e "import { readFile, access } from 'node:fs/promises'; const p=JSON.parse(await readFile('artifacts/unpacked/package/package.json','utf8')); for(const f of ['index.js','state.js','config.js','history.js','client.js','icon.svg','locale/en.json','locale/zh.json','types/afk.d.ts','types/host.d.ts','types/client.d.ts','types/history.d.ts']) await access('artifacts/unpacked/package/'+f); if(p.engines.dsh!=='>=0.2.2-rc.1 <=0.2.2-rc.2') throw new Error('Unexpected compatibility target');"
       - name: Typecheck standalone packed JavaScript and declarations
+        env:
+          DSH_TEST_RUNTIME_DIR: ${{ github.workspace }}/${{ matrix.dsh.directory }}
+          DSH_TEST_RUNTIME_VERSION: ${{ matrix.dsh.version }}
         run: |
+          # Published SDK declarations include cross-package type imports beyond their
+          # runtime dependencies. Keep their logical paths in this SDK's module table
+          # instead of realpathing into the shared store and falling back to root rc.1.
+          ln -s "$DSH_TEST_RUNTIME_DIR/node_modules" artifacts/node_modules
           node --input-type=module -e "import { writeFile } from 'node:fs/promises'; await writeFile('artifacts/tsconfig.package.json',JSON.stringify({extends:'../tsconfig.json',include:['unpacked/package/*.js','unpacked/package/types/**/*.d.ts'],exclude:[]}));"
-          pnpm exec tsc -p artifacts/tsconfig.package.json --pretty false
+          pnpm exec tsc -p artifacts/tsconfig.package.json --preserveSymlinks --listFiles --pretty false | tee artifacts/package-types.txt
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          import assert from 'node:assert/strict';
+          const packages = new Set();
+          for (const file of readFileSync('artifacts/package-types.txt', 'utf8').split('\n')) {
+            const match = file.match(/^(.*\/node_modules\/(@deepseek-ai\/dsh-[^/]+))\//);
+            if (!match) continue;
+            const manifest = JSON.parse(readFileSync(match[1] + '/package.json', 'utf8'));
+            assert.equal(manifest.version, process.env.DSH_TEST_RUNTIME_VERSION, file);
+            packages.add(match[2]);
+          }
+          for (const name of ['dsh-session', 'dsh-typert-protocol', 'dsh-api-remotes', 'dsh-client-ui-slots']) {
+            assert.ok(packages.has('@deepseek-ai/' + name), name + ' declarations must be checked');
+          }
+          NODE
       - name: Test the packed plugin against the same real DSH SDK
         env:
           DSH_TEST_RUNTIME_DIR: ${{ github.workspace }}/${{ matrix.dsh.directory }}

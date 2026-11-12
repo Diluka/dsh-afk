@@ -16,7 +16,7 @@
   },
   "engines": {
     "node": ">=22",
-    "dsh": ">=0.2.2-rc.1 <=0.2.2-rc.1"
+    "dsh": ">=0.2.2-rc.1 <=0.2.2-rc.2"
   },
   "exports": {
     ".": "./index.js",
@@ -47,9 +47,9 @@
     "typecheck": "tsc -p tsconfig.json --pretty false"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh-typert-protocol": ">=0.2.2-rc.1 <=0.2.2-rc.1",
+    "@deepseek-ai/dsh-typert-protocol": ">=0.2.2-rc.1 <=0.2.2-rc.2",
     "@deepseek-ai/schemastery": "3.19.0",
-    "zod": "4.4.3 || 4.6.7"
+    "zod": "4.4.3 || 4.6.6 || 4.6.7"
   },
   "dsh": {
     "bundle": {
@@ -97,6 +97,7 @@
     "@deepseek-ai/dsh-home-paths": "0.2.2-rc.1",
     "@deepseek-ai/dsh-launch-environment": "0.2.2-rc.1",
     "@deepseek-ai/dsh-llm": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-native-command": "0.2.2-rc.1",
     "@deepseek-ai/dsh-ptc-runtime": "0.2.2-rc.1",
     "@deepseek-ai/dsh-sandbox": "0.2.2-rc.1",
     "@deepseek-ai/dsh-sandbox-policy": "0.2.2-rc.1",
