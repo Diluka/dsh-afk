@@ -21,7 +21,7 @@
 ## 环境与依赖
 
 - 兼容范围、必需 peer 和 pnpm 版本以 [package.json](./package.json) 为准；SDK 及测试夹具版本以各自的依赖清单和锁文件为准。
-- 兼容声明与验证矩阵分开维护：声明只有下界，验证矩阵在每次 CI 运行时解析。本轮 `latest` 为 `0.2.2-rc.1`、`next` 为 `0.2.2-rc.3`（撰写时值，CI 以当时 npm 标签为准）。根目录 `devDependencies` 固定最新测试发行 `0.2.2-rc.3`（自带 Zod `4.6.7`），[runtime-next 夹具](./test/fixtures/runtime-next/package.json) 固定上一发行 `0.2.2-rc.2`（Zod `4.6.6`），[runtime-min 夹具](./test/fixtures/runtime-min/package.json) 固定声明下界 `0.2.2-rc.1`。每个矩阵目标都必须映射到一个真实固定该发行的安装；没有对应安装时必须显式补夹具，不能让测试回落到相邻发行。夹具的 SDK 必须全部精确固定同一发行，不能由祖先目录提供另一版依赖；rc.1 未发布 `@deepseek-ai/dsh-error`，该夹具不列它。
+- 兼容声明与验证矩阵分开维护：声明只有下界，验证矩阵在每次 CI 运行时解析。本轮 `latest` 为 `0.2.2-rc.1`、`next` 为 `0.2.2-rc.3`（撰写时值，CI 以当时 npm 标签为准）。根目录 `devDependencies` 固定最新测试发行 `0.2.2-rc.3`（自带 Zod `4.6.7`），[runtime-next 夹具](./test/fixtures/runtime-next/package.json) 固定上一发行 `0.2.2-rc.2`（Zod `4.6.6`），[runtime-min 夹具](./test/fixtures/runtime-min/package.json) 固定声明下界 `0.2.2-rc.1`。每个矩阵目标都必须映射到一个真实固定该发行的安装；没有对应安装时必须显式补夹具，不能让测试回落到相邻发行。夹具的 SDK 必须全部精确固定同一发行，不能由祖先目录提供另一版依赖。夹具的依赖清单只列该发行实际存在并声明的包，不从相邻发行复制；例如 `@deepseek-ai/dsh-error` 自 rc.2 起才发布，rc.1 那组包均未声明它，因此 runtime-min 不列它。
 - 宿主已有的公共库优先使用必需 `peerDependencies`，开发与 CI 在 `devDependencies` 精确固定同版；不要引入普通生产依赖的重复副本。
 - 保留 [pnpm-workspace.yaml](./pnpm-workspace.yaml) 的 `autoInstallPeers: false`；缺失 peer 时不要靠自动选版掩盖问题，也不要把必需 peer 标为 optional。
 - peer 是兼容声明，不是自动运行时保护。改版本前核对实际宿主及其解析契约；分别验证外部 link 与普通安装的 provider。profile 本地同名依赖可能优先于宿主安装副本，须验证实际选择及功能，不能一概假设两者身份相同。
