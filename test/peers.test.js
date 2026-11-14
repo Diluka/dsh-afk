@@ -8,12 +8,14 @@ import { tmpdir } from 'node:os';
 
 const sourceDir = process.env.DSH_TEST_PLUGIN_DIR ?? fileURLToPath(new URL('..', import.meta.url));
 const runtime = process.env.DSH_TEST_RUNTIME_DIR;
-// CI exercises the exact resolved `latest` and `next` SDKs independently.
-const verifiedReleases = ['0.2.2-rc.1', '0.2.2-rc.2'];
-const compatibilityRange = '>=0.2.2-rc.1 <=0.2.2-rc.2';
-const requiredPeers = { '@deepseek-ai/dsh-typert-protocol': compatibilityRange,
+// The declaration carries only a minimum; CI resolves the moving `latest` and
+// `next` channels at run time instead of pinning a verified release list here.
+const compatibilityRange = '>=0.2.2-rc.1';
+// Development dependencies track the newest tested release, not a verified list.
+const developmentRelease = '0.2.2-rc.3';
+const requiredPeers = { '@deepseek-ai/dsh-typert-protocol': '*',
   '@deepseek-ai/schemastery': '3.19.0', zod: '4.4.3 || 4.6.6 || 4.6.7' };
-const developmentPeers = { '@deepseek-ai/dsh-typert-protocol': '0.2.2-rc.1',
+const developmentPeers = { '@deepseek-ai/dsh-typert-protocol': developmentRelease,
   '@deepseek-ai/schemastery': '3.19.0', zod: '4.6.7' };
 
 /** @param {unknown} value @returns {Record<string, unknown>} */
@@ -28,8 +30,7 @@ async function manifestOf(filename) {
 /** @param {ReturnType<typeof createRequire>} runtimeRequire */
 async function runtimeVersionOf(runtimeRequire) {
   const version = (await manifestOf(runtimeRequire.resolve('@deepseek-ai/dsh-app-boot/package.json'))).version;
-  assert.ok(typeof version === 'string');
-  assert.ok(verifiedReleases.includes(version), 'the selected Host SDK must be one of the verified releases');
+  assert.equal(typeof version, 'string');
   if (process.env.DSH_TEST_RUNTIME_VERSION) assert.equal(version, process.env.DSH_TEST_RUNTIME_VERSION, 'CI must exercise the requested release, not an ancestor fallback');
   return version;
 }
@@ -52,10 +53,14 @@ test('production manifest requires Host-owned peers, with exact matching develop
   assert.match(workspace, /^\s*- ['"]!@deepseek-ai\/dsh-\*['"]\s*$/m, 'dual SDK declarations must not depend on the hidden hoist pool or installation order');
 });
 
-test('the selected real SDK fixture resolves one supported release and its intended providers', { skip: !runtime }, async () => {
+test('the selected real SDK fixture resolves one supported release and its intended providers', { skip: !runtime }, async (t) => {
   assert.ok(runtime);
   const runtimeRequire = createRequire(join(runtime, 'package.json'));
-  const version = await runtimeVersionOf(runtimeRequire);
+  const version = /** @type {string} */ (await runtimeVersionOf(runtimeRequire));
+  const boot = /** @type {typeof import('@deepseek-ai/dsh-app-boot')} */ (await import(pathToFileURL(runtimeRequire.resolve('@deepseek-ai/dsh-app-boot')).href));
+  const issue = boot.evaluatePluginCompatibility(await manifestOf(join(sourceDir, 'package.json')), {}, version);
+  if (issue) t.diagnostic(`DSH ${version} resolves outside the declared minimum ${compatibilityRange}: ${JSON.stringify(issue.requirements)}`);
+  assert.equal(issue, undefined, `the selected SDK must satisfy the declared range before its providers are trusted`);
   const manifest = await manifestOf(join(runtime, 'package.json'));
   const dependencies = record(manifest.dependencies ?? manifest.devDependencies ?? {});
   for (const name of Object.keys(dependencies).filter(name => name.startsWith('@deepseek-ai/dsh-'))) {
@@ -86,14 +91,14 @@ test('functional integration payload shares the selected real SDK peer providers
   assert.equal(Object.getPrototypeOf(AfkHistoryService), TypertRemoteService, 'the actual service must extend the selected Host ESM class, not another release');
 });
 
-test('real Host compatibility gates admit the declared boundary and verified releases and reject versions outside the bounds', { skip: !runtime }, async () => {
+test('real Host compatibility gates admit the declared minimum and future releases and reject older ones', { skip: !runtime }, async () => {
   assert.ok(runtime);
   const runtimeRequire = createRequire(join(runtime, 'package.json'));
-  await runtimeVersionOf(runtimeRequire);
+  const selected = /** @type {string} */ (await runtimeVersionOf(runtimeRequire));
   const { evaluatePluginCompatibility } = /** @type {typeof import('@deepseek-ai/dsh-app-boot')} */ (await import(pathToFileURL(runtimeRequire.resolve('@deepseek-ai/dsh-app-boot')).href));
   const manifest = await manifestOf(join(sourceDir, 'package.json'));
-  for (const version of verifiedReleases) assert.equal(evaluatePluginCompatibility(manifest, {}, version), undefined);
-  for (const version of ['0.1.7-rc.2', '0.2.0-rc.2', '0.2.1-alpha.3', '0.2.1-rc.2', '0.2.1-rc.5', '0.2.2-alpha.3', '0.2.2-rc.3', '0.2.2', '0.3.0']) {
+  for (const version of ['0.2.2-rc.1', '0.2.2-rc.2', '0.2.2-rc.3', '0.2.2', '0.3.0', '1.0.0', selected]) assert.equal(evaluatePluginCompatibility(manifest, {}, version), undefined, version);
+  for (const version of ['0.1.7-rc.2', '0.2.0-rc.2', '0.2.1-alpha.3', '0.2.1-rc.2', '0.2.1-rc.5', '0.2.2-alpha.3']) {
     const issue = evaluatePluginCompatibility(manifest, {}, version);
     assert.ok(issue, `${version} must remain unsupported`);
     assert.equal(issue.exempted, false);

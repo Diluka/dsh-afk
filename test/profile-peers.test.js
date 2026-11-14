@@ -26,7 +26,7 @@ async function versionOf(directory) {
 }
 
 /**
- * The workspace carries the root Zod 4.6.7 provider and SDK pins 4.4.3/4.6.6.
+ * The workspace carries a root Zod 4.6.7 provider beside the SDK's own copy.
  * Select a physically distinct provider from the one the selected Host resolves,
  * so profile-local precedence is observable.
  * @param {string} hostVersion
@@ -37,7 +37,10 @@ async function alternateZod(hostVersion) {
   const sdkRequire = createRequire(workspaceRequire.resolve('@deepseek-ai/dsh-agent/package.json'));
   for (const candidate of [workspaceRequire.resolve('zod/package.json'), sdkRequire.resolve('zod/package.json')]) {
     const directory = await realpath(dirname(candidate));
-    if (await versionOf(directory) !== hostVersion) return directory;
+    const version = await versionOf(directory);
+    if (version === hostVersion) continue;
+    assert.ok(version === '4.4.3' || version === '4.6.6' || version === '4.6.7', 'the alternate provider must be a supported Zod');
+    return directory;
   }
   throw new Error('the workspace install must provide an alternate supported Zod for the profile-peer fixture');
 }
@@ -103,7 +106,6 @@ async function exerciseFixture() {
   assert.equal((await lstat(pluginDir)).isSymbolicLink(), false);
   const hostZodVersion = await versionOf(dirname(hostRequire.resolve('zod/package.json')));
   const localZodVersion = await versionOf(join(profileDir, 'node_modules', 'zod'));
-  assert.equal(localZodVersion, hostZodVersion === '4.6.7' ? '4.4.3' : '4.6.7');
   assert.notEqual(localZodVersion, hostZodVersion, 'profile precedence must exercise a different supported version');
   if (process.env.DSH_TEST_ZOD_VERSION) assert.equal(hostZodVersion, process.env.DSH_TEST_ZOD_VERSION);
   // Test actual ESM classes, not only require.resolve (Zod and Schemastery
