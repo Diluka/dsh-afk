@@ -17,22 +17,37 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  resolve-dsh:
+    name: Resolve DSH test targets
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      targets: ${{ steps.matrix.outputs.targets }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.x'
+      # The declared range has no upper bound, so the matrix follows the
+      # declared minimum and the current npm latest/next channels.
+      - name: Resolve the minimum and the moving channels
+        id: matrix
+        run: node .github/resolve-dsh-matrix.cjs
+
   check:
     name: Node ${{ matrix.node }} / DSH ${{ matrix.dsh.version }}
+    needs: resolve-dsh
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         node: ['22.x', '24.x']
-        dsh:
-          # Pin the resolved npm latest and next SDKs and their actual Zod providers.
-          - version: '0.2.2-rc.1'
-            directory: '.'
-            zod: '4.6.7'
-          - version: '0.2.2-rc.2'
-            directory: 'test/fixtures/runtime-next'
-            zod: '4.6.6'
+        dsh: ${{ fromJSON(needs.resolve-dsh.outputs.targets) }}
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -49,15 +64,47 @@ jobs:
           cache: pnpm
       - name: Install locked dependencies without lifecycle scripts
         run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Reject a release outside the declared minimum with the pinned preflight
+        env:
+          DSH_VERSION: ${{ matrix.dsh.version }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          import { evaluatePluginCompatibility } from '@deepseek-ai/dsh-app-boot';
+          const manifest = JSON.parse(readFileSync('package.json', 'utf8'));
+          const issue = evaluatePluginCompatibility(manifest, {}, process.env.DSH_VERSION);
+          if (issue) throw new Error(`DSH ${process.env.DSH_VERSION} is outside the declared minimum ${manifest.engines.dsh}`);
+          NODE
       - name: Check JavaScript syntax
         run: pnpm run check
       - name: Check JSDoc types without emitting JavaScript
         run: pnpm run typecheck
-      - name: Test source against the pinned real DSH SDK
+      - name: Select the isolated SDK installation for this release
         env:
-          DSH_TEST_RUNTIME_DIR: ${{ github.workspace }}/${{ matrix.dsh.directory }}
-          DSH_TEST_RUNTIME_VERSION: ${{ matrix.dsh.version }}
-          DSH_TEST_ZOD_VERSION: ${{ matrix.dsh.zod }}
+          DSH_VERSION: ${{ matrix.dsh.version }}
+        run: |
+          # Each target must map to an installation that actually pins it: the
+          # root development SDK or a fixture. Guessing by "not the root" would
+          # silently test the wrong release, and the suite rejects that overlap.
+          # DSH_TEST_ZOD_VERSION is left to the provider checks: the supported
+          # Zod range legitimately differs between releases.
+          for candidate in . test/fixtures/runtime-min test/fixtures/runtime-next; do
+            installed="$(node -p "require('./$candidate/node_modules/@deepseek-ai/dsh-app-boot/package.json').version")"
+            if [ "$installed" = "$DSH_VERSION" ]; then
+              selection="$(cd "$candidate" && pwd)"
+              break
+            fi
+          done
+          if [ -z "${selection:-}" ]; then
+            echo "No checked-in installation pins DSH $DSH_VERSION; add or update a fixture for it" >&2
+            exit 1
+          fi
+          echo "Testing against $selection"
+          echo "DSH_TEST_RUNTIME=$selection" >> "$GITHUB_ENV"
+          echo "DSH_TEST_RUNTIME_VERSION=$DSH_VERSION" >> "$GITHUB_ENV"
+      - name: Test source against the isolated real DSH SDK
+        env:
+          DSH_TEST_RUNTIME_DIR: ${{ env.DSH_TEST_RUNTIME }}
         run: |
           pnpm run test:runtime | tee source-tests.tap
           node -e "const fs=require('node:fs'); const text=fs.readFileSync('source-tests.tap','utf8'); if(!/^# skipped 0$/m.test(text)) throw new Error('Integration checks were skipped');"
@@ -66,15 +113,14 @@ jobs:
           mkdir -p artifacts/unpacked
           pnpm pack --out artifacts/dsh-afk-ci.tgz
           tar -xzf artifacts/dsh-afk-ci.tgz -C artifacts/unpacked
-          node --input-type=module -e "import { readFile, access } from 'node:fs/promises'; const p=JSON.parse(await readFile('artifacts/unpacked/package/package.json','utf8')); for(const f of ['index.js','state.js','config.js','history.js','client.js','icon.svg','locale/en.json','locale/zh.json','types/afk.d.ts','types/host.d.ts','types/client.d.ts','types/history.d.ts']) await access('artifacts/unpacked/package/'+f); if(p.engines.dsh!=='>=0.2.2-rc.1 <=0.2.2-rc.2') throw new Error('Unexpected compatibility target');"
+          node --input-type=module -e "import { readFile, access } from 'node:fs/promises'; import assert from 'node:assert/strict'; const p=JSON.parse(await readFile('artifacts/unpacked/package/package.json','utf8')); for(const f of ['index.js','state.js','config.js','history.js','client.js','icon.svg','locale/en.json','locale/zh.json','types/afk.d.ts','types/host.d.ts','types/client.d.ts','types/history.d.ts']) await access('artifacts/unpacked/package/'+f); const declared=JSON.parse(await readFile('package.json','utf8')).engines.dsh; assert.equal(p.engines.dsh, declared); assert.match(p.engines.dsh, /^>=\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/); assert.ok(!p.engines.dsh.includes(' '), 'the DSH range must not cap future releases'); assert.equal(p.peerDependencies['@deepseek-ai/dsh-typert-protocol'], '*');"
       - name: Typecheck standalone packed JavaScript and declarations
         env:
-          DSH_TEST_RUNTIME_DIR: ${{ github.workspace }}/${{ matrix.dsh.directory }}
-          DSH_TEST_RUNTIME_VERSION: ${{ matrix.dsh.version }}
+          DSH_TEST_RUNTIME_DIR: ${{ env.DSH_TEST_RUNTIME }}
         run: |
           # Published SDK declarations include cross-package type imports beyond their
           # runtime dependencies. Keep their logical paths in this SDK's module table
-          # instead of realpathing into the shared store and falling back to root rc.1.
+          # instead of realpathing into the shared store and falling back to the root.
           ln -s "$DSH_TEST_RUNTIME_DIR/node_modules" artifacts/node_modules
           node --input-type=module -e "import { writeFile } from 'node:fs/promises'; await writeFile('artifacts/tsconfig.package.json',JSON.stringify({extends:'../tsconfig.json',include:['unpacked/package/*.js','unpacked/package/types/**/*.d.ts'],exclude:[]}));"
           pnpm exec tsc -p artifacts/tsconfig.package.json --preserveSymlinks --listFiles --pretty false | tee artifacts/package-types.txt
@@ -95,9 +141,7 @@ jobs:
           NODE
       - name: Test the packed plugin against the same real DSH SDK
         env:
-          DSH_TEST_RUNTIME_DIR: ${{ github.workspace }}/${{ matrix.dsh.directory }}
-          DSH_TEST_RUNTIME_VERSION: ${{ matrix.dsh.version }}
-          DSH_TEST_ZOD_VERSION: ${{ matrix.dsh.zod }}
+          DSH_TEST_RUNTIME_DIR: ${{ env.DSH_TEST_RUNTIME }}
           DSH_TEST_PLUGIN_DIR: ${{ github.workspace }}/artifacts/unpacked/package
         run: |
           pnpm run test:runtime | tee package-tests.tap

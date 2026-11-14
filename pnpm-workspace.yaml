@@ -1,5 +1,6 @@
 packages:
   - test/fixtures/runtime-next
+  - test/fixtures/runtime-min
 
 autoInstallPeers: false
 
@@ -8,7 +9,8 @@ hoistPattern:
   - '*'
   - '!@deepseek-ai/dsh-*'
 
-# Align only rc.1 projection declarations with its selected Zod provider.
-# rc.2 already declares its own exact Zod 4.6.6; do not override that fixture.
+# Align each projection declaration with the Zod provider selected for its root.
+# The fixtures declare their own exact Zod; do not override them.
 overrides:
   '@deepseek-ai/dsh-session-projection@0.2.2-rc.1>zod': 4.6.7
+  '@deepseek-ai/dsh-session-projection@0.2.2-rc.3>zod': 4.6.7
