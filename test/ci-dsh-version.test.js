@@ -43,17 +43,23 @@ test('CI rejects a bounded or malformed declaration and invalid channel versions
   assert.throws(() => buildTargets('>=0.2.2-rc.1', { next: '0.2.2-rc.3' }), /invalid DSH latest version/);
 });
 
-test('the checked-in fixtures and CI matrix follow the declared minimum', async () => {
-  const targets = buildTargets(manifest.engines.dsh, { latest: '0.2.2-rc.1', next: '0.2.2-rc.3' });
-  assert.equal(targets[0]?.version, manifest.engines.dsh.slice(2));
-  // Development dependencies track the newest tested release; the root also
-  // holds a fixture of the previous one so the version class stays covered.
-  const bootVersion = JSON.parse(await readFile(new URL('../node_modules/@deepseek-ai/dsh-app-boot/package.json', import.meta.url), 'utf8')).version;
+test('every checked-in installation pins one release, and the minimum and newest shared ones are present', async () => {
+  /** @param {string} directory */
+  const releaseOf = async (directory) => JSON.parse(await readFile(new URL(`${directory}/node_modules/@deepseek-ai/dsh-app-boot/package.json`, import.meta.url), 'utf8')).version;
+  const minimum = manifest.engines.dsh.slice(2);
+  // Development dependencies track the newest tested release; the fixtures
+  // supply every other release CI may select, so a target never falls back to
+  // a nearby installation. Every fixture must pin exactly one release.
+  const bootVersion = await releaseOf('../');
   assert.equal(manifest.devDependencies['@deepseek-ai/dsh-app-boot'], bootVersion);
   assert.equal(new Set(Object.values(manifest.devDependencies).filter(version => /^0\.\d/.test(version))).size, 1, 'all DSH development pins must share one release');
+  const installations = new Map([[minimum, await releaseOf('../test/fixtures/runtime-min')], [bootVersion, bootVersion]]);
   for (const fixture of ['runtime-next']) {
     const fixtureManifest = JSON.parse(await readFile(new URL(`../test/fixtures/${fixture}/package.json`, import.meta.url), 'utf8'));
-    const fixtureVersions = new Set(Object.values(fixtureManifest.dependencies).filter(version => /^0\.\d\.\d/.test(version)));
+    const fixtureVersions = new Set(Object.values(fixtureManifest.dependencies).filter(version => /^0\.\d/.test(version)));
     assert.equal(fixtureVersions.size, 1, `${fixture} must pin exactly one DSH release`);
+    installations.set([...fixtureVersions][0], await releaseOf(`../test/fixtures/${fixture}`));
   }
+  // The installation the minimum target selects must pin the minimum itself.
+  assert.equal(installations.get(minimum), minimum, 'the declared minimum needs an installation pinned to it');
 });

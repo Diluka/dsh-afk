@@ -21,7 +21,7 @@
 ## 环境与依赖
 
 - 兼容范围、必需 peer 和 pnpm 版本以 [package.json](./package.json) 为准；SDK 及测试夹具版本以各自的依赖清单和锁文件为准。
-- 兼容声明与验证矩阵分开维护：声明只有下界，验证矩阵在每次 CI 运行时解析。本轮 `latest` 为 `0.2.2-rc.1`、`next` 为 `0.2.2-rc.3`（撰写时值，CI 以当时 npm 标签为准）。根目录 `devDependencies` 固定最新测试发行 `0.2.2-rc.3`（自带 Zod `4.6.7`），[隔离夹具](./test/fixtures/runtime-next/package.json) 固定上一发行 `0.2.2-rc.2`（Zod `4.6.6`），保证兼容区间下界早于开发基线时仍有两个版本类。夹具的 SDK 必须全部精确固定同一发行，不能由祖先目录提供另一版依赖。
+- 兼容声明与验证矩阵分开维护：声明只有下界，验证矩阵在每次 CI 运行时解析。本轮 `latest` 为 `0.2.2-rc.1`、`next` 为 `0.2.2-rc.3`（撰写时值，CI 以当时 npm 标签为准）。根目录 `devDependencies` 固定最新测试发行 `0.2.2-rc.3`（自带 Zod `4.6.7`），[runtime-next 夹具](./test/fixtures/runtime-next/package.json) 固定上一发行 `0.2.2-rc.2`（Zod `4.6.6`），[runtime-min 夹具](./test/fixtures/runtime-min/package.json) 固定声明下界 `0.2.2-rc.1`。每个矩阵目标都必须映射到一个真实固定该发行的安装；没有对应安装时必须显式补夹具，不能让测试回落到相邻发行。夹具的 SDK 必须全部精确固定同一发行，不能由祖先目录提供另一版依赖；rc.1 未发布 `@deepseek-ai/dsh-error`，该夹具不列它。
 - 宿主已有的公共库优先使用必需 `peerDependencies`，开发与 CI 在 `devDependencies` 精确固定同版；不要引入普通生产依赖的重复副本。
 - 保留 [pnpm-workspace.yaml](./pnpm-workspace.yaml) 的 `autoInstallPeers: false`；缺失 peer 时不要靠自动选版掩盖问题，也不要把必需 peer 标为 optional。
 - peer 是兼容声明，不是自动运行时保护。改版本前核对实际宿主及其解析契约；分别验证外部 link 与普通安装的 provider。profile 本地同名依赖可能优先于宿主安装副本，须验证实际选择及功能，不能一概假设两者身份相同。
@@ -33,7 +33,7 @@
 
 - 功能与 API 适配以本次明确的目标版本为准；`latest`、`next` 等移动标签在 CI 运行时解析为精确发行版本，不把移动标签的具体取值写进代码或测试。
 - 兼容声明只有下界、不设上界：`engines.dsh` 为 `>=0.2.2-rc.1`，DSH peer 为 `*`。未来发行默认通过版本预检，未经测试不代表一定兼容；CI 每次解析当时的 `latest` 与 `next`，新增目标自动纳入验证。实际启动或测试失败时再排查适配，不因版本号超出现有测试集合而拒绝或收紧声明。
-- 验证矩阵与声明分开维护：CI 只覆盖声明下界与两个移动标签，按版本去重；相邻发行按 API 兼容默认成立，不逐版穷举，也不为其引入桥接或分叉。开发依赖跟随最新测试发行，独立夹具保留上一发行，使声明下界早于开发基线时仍有第二个版本类可测。
+- 验证矩阵与声明分开维护：CI 只覆盖声明下界与两个移动标签，按版本去重；相邻发行按 API 兼容默认成立，不逐版穷举，也不为其引入桥接或分叉。开发依赖跟随最新测试发行，独立夹具补齐其余矩阵目标，使声明下界早于开发基线时仍有第二个版本类可测。`latest` 落后于 `next` 是常态，两个标签都可能不是开发基线，因此选择安装一律按实际发行匹配，不按“是否根目录”推断。
 - 不为保留历史版本增加额外兼容层，也不在业务代码中加入版本探测分支（例如检测 Host 是否提供某个字段）。同版本 Host/Client 配对是运行契约；插件升级过渡期按不可用状态禁用，不提供 legacy 读写兜底。
 - 声明下界以前的历史版本不因“未测试”机械移除判定；停止支持须依据实际契约与验证证据，并同步 [package.json](./package.json)、锁文件及用户说明。
 - `0.2.2-rc.1` 的破坏性变更决定了本轮兼容区间收窄：会话投影注册改为必须 `await` 的 `ProjectionHandle`、`ctx.tools.execute` 改为批量入口、PTC 事件类型迁至 `dsh-tool-executor-ptc`。因此停止 `0.2.1` 线支持，不保留双版本分支。
@@ -115,12 +115,11 @@ pnpm run check
 pnpm run typecheck
 # Root development SDK (newest tested release).
 DSH_TEST_RUNTIME_DIR="$PWD" DSH_TEST_RUNTIME_VERSION=0.2.2-rc.3 pnpm run test:runtime
+DSH_TEST_RUNTIME_DIR="$PWD/test/fixtures/runtime-min" DSH_TEST_RUNTIME_VERSION=0.2.2-rc.1 pnpm run test:runtime
 DSH_TEST_RUNTIME_DIR="$PWD/test/fixtures/runtime-next" DSH_TEST_RUNTIME_VERSION=0.2.2-rc.2 DSH_TEST_ZOD_VERSION=4.6.6 pnpm run test:runtime
-# The declared minimum needs its own checkout pinned to that release.
-DSH_TEST_RUNTIME_DIR="<另一个固定 0.2.2-rc.1 的安装>" DSH_TEST_RUNTIME_VERSION=0.2.2-rc.1 pnpm run test:runtime
 ```
 
-- 按 [CI 矩阵](./.github/workflows/ci.yml) 覆盖声明下界与解析后的 `latest`、`next`，按版本去重，不逐版穷举。根目录与 `runtime-next` 夹具只能代表当前固定的两个发行；声明下界早于它们时，用另行固定该发行的安装验证，不能只凭标签推断。`DSH_TEST_RUNTIME_VERSION` 防止误用祖先目录提供的另一版 SDK，`DSH_TEST_ZOD_VERSION` 可进一步要求实际 provider 的精确版本。测试不启动服务器、不调用模型、不读写用户 profile。
+- 按 [CI 矩阵](./.github/workflows/ci.yml) 覆盖声明下界与解析后的 `latest`、`next`，按版本去重，不逐版穷举。根目录与两个夹具覆盖这些目标全部出现的发行；移动标签前进时须先补固定该发行的安装，再让 CI 选中它。`DSH_TEST_RUNTIME_VERSION` 防止误用祖先目录提供的另一版 SDK，`DSH_TEST_ZOD_VERSION` 可进一步要求实际 provider 的精确版本。测试不启动服务器、不调用模型、不读写用户 profile。
 - 也可将该变量设为另一个已确认 DSH 安装的绝对目录（例如本机 CLI 安装；集成测试会用该 Host 的预检校验 `engines.dsh` 并要求选中发行符合声明）。对 DSH CLI 安装，测试入口按真实 `createRuntimeResolution` 的安装依赖闭包构造隔离测试视图，而不将普通 Node 根解析误作宿主 provider。仅运行 `pnpm test` 时部分集成检查会 skipped，必须如实报告，不能当完整通过。
 - [版本契约测试](./test/ci-dsh-version.test.js) 断言声明边界、未来发行放行与 CI 目标解析；[运行时测试入口](./scripts/test-runtime.js) 将源码或最终制品的运行文件复制到无自身 node_modules 的临时 payload，其父级仅提供所选真实 SDK 的公共 peer，完整功能测试不得回落到根开发 SDK 的另一版 peer；临时夹具在退出时清理，不修改 SDK 安装。[peer 测试](./test/peers.test.js) 检查生产 manifest 契约、功能 payload 的真实路径与 ESM 类身份，并用真实宿主解析器验证外部 link 的 provider 选择；[profile peer 测试](./test/profile-peers.test.js) 覆盖普通安装时 profile 本地副本优先及核心运行、历史查询链路。别用原位开发依赖或只导入模块掩盖完整功能链中的混版。
 - 纯 formatter VM 检查不等于 React 或 GUI 测试。UI 变化须在真实宿主检查交互、主题、键盘/焦点和错误状态，并恢复改动的用户设置、归档测试会话、关闭测试浏览器。
@@ -142,7 +141,7 @@ DSH_TEST_PLUGIN_DIR="$pack_dir/unpacked/package" pnpm run test:runtime
 
 [分发清单](./package.json) 必须包含运行 JS 引用的生产声明文件；不打包测试声明、编译负例、SDK 开发依赖或本机产物。原创图标和中英文元数据随包分发。
 
-[CI](./.github/workflows/ci.yml) 先用 [resolve-dsh-matrix.cjs](./.github/resolve-dsh-matrix.cjs) 解析声明下界与当时的 npm `latest`、`next`，再以 Node 22/24 交叉运行冻结锁安装、下界预检、语法、类型、源码集成、打包与制品集成检查。一个目标取根目录 `node_modules` 中的发行，另一个取固定上一发行的夹具；运行时的 Zod 由所选 provider 检查确认，不跨发行写死。制品类型检查通过 `artifacts/node_modules` 指向当前矩阵 SDK，并用 `--preserveSymlinks` 让 SDK 内未声明为运行依赖的跨包类型引用仍按该模块表解析；同时校验实际载入的 SDK 声明版本，不能经共享 `.pnpm` 目录回落根开发版。保持：
+[CI](./.github/workflows/ci.yml) 先用 [resolve-dsh-matrix.cjs](./.github/resolve-dsh-matrix.cjs) 解析声明下界与当时的 npm `latest`、`next`，再以 Node 22/24 交叉运行冻结锁安装、下界预检、语法、类型、源码集成、打包与制品集成检查。每个目标按实际发行匹配根目录或夹具中的安装，找不到对应安装时该 job 失败而不是回落到相邻发行；运行时的 Zod 由所选 provider 检查确认，不跨发行写死。制品类型检查通过 `artifacts/node_modules` 指向当前矩阵 SDK，并用 `--preserveSymlinks` 让 SDK 内未声明为运行依赖的跨包类型引用仍按该模块表解析；同时校验实际载入的 SDK 声明版本，不能经共享 `.pnpm` 目录回落根开发版。保持：
 
 - 依赖脚本禁用、Actions 固定完整 SHA、`contents: read`、checkout 不保留凭据；无自动发布或部署。
 - Bash `pipefail` 保证 `node --test | tee` 不吞失败；任何 skipped 检查使 CI 失败。

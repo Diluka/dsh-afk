@@ -83,16 +83,24 @@ jobs:
         env:
           DSH_VERSION: ${{ matrix.dsh.version }}
         run: |
-          # Development dependencies track the newest tested release. Selecting
-          # the release of the root install = the newest target; any other
-          # target uses the fixture, which must declare that same release.
-          # DSH_TEST_ZOD_VERSION is left to the provider checks: the Zod range
-          # legitimately differs between releases.
-          if [ "$DSH_VERSION" = "$(node -p "require('./node_modules/@deepseek-ai/dsh-app-boot/package.json').version")" ]; then
-            echo "DSH_TEST_RUNTIME=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
-          else
-            echo "DSH_TEST_RUNTIME=$GITHUB_WORKSPACE/test/fixtures/runtime-next" >> "$GITHUB_ENV"
+          # Each target must map to an installation that actually pins it: the
+          # root development SDK or a fixture. Guessing by "not the root" would
+          # silently test the wrong release, and the suite rejects that overlap.
+          # DSH_TEST_ZOD_VERSION is left to the provider checks: the supported
+          # Zod range legitimately differs between releases.
+          for candidate in . test/fixtures/runtime-min test/fixtures/runtime-next; do
+            installed="$(node -p "require('./$candidate/node_modules/@deepseek-ai/dsh-app-boot/package.json').version")"
+            if [ "$installed" = "$DSH_VERSION" ]; then
+              selection="$(cd "$candidate" && pwd)"
+              break
+            fi
+          done
+          if [ -z "${selection:-}" ]; then
+            echo "No checked-in installation pins DSH $DSH_VERSION; add or update a fixture for it" >&2
+            exit 1
           fi
+          echo "Testing against $selection"
+          echo "DSH_TEST_RUNTIME=$selection" >> "$GITHUB_ENV"
           echo "DSH_TEST_RUNTIME_VERSION=$DSH_VERSION" >> "$GITHUB_ENV"
       - name: Test source against the isolated real DSH SDK
         env:
